@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.edge-qa-profile/
+qa-*.png
+*.log
