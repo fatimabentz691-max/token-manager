@@ -12,8 +12,10 @@ const facts = [
   ["03", "完全本地处理", "API 密钥使用 Windows DPAPI 加密，日志与会话正文不会上传。"],
 ];
 
+const publicUrl = (path) => `${import.meta.env.BASE_URL}${path.replace(/^\//, "")}`;
+
 function DownloadButton({ portable = false, children, className = "" }) {
-  const href = portable ? "/downloads/TokenManager_0.6.0_portable.exe" : "/downloads/TokenManager_0.6.0_x64-setup.exe";
+  const href = portable ? publicUrl("downloads/TokenManager_0.6.0_portable.exe") : publicUrl("downloads/TokenManager_0.6.0_x64-setup.exe");
   return <a className={`download-button ${className}`} href={href} download>{children}</a>;
 }
 
@@ -29,7 +31,7 @@ export function App() {
   return (
     <div className="site-shell">
       <header className={`topbar ${scrolled ? "is-scrolled" : ""}`}>
-        <a className="brand" href="#top" aria-label="Token Manager 首页"><img src="/images/token-manager-icon.png" alt="" /><span>Token Manager</span></a>
+        <a className="brand" href="#top" aria-label="Token Manager 首页"><img src={publicUrl("images/token-manager-icon.png")} alt="" /><span>Token Manager</span></a>
         <nav aria-label="主导航"><a href="#features">功能</a><a href="#providers">平台</a><a href="#privacy">隐私</a><a href="#faq">常见问题</a></nav>
         <DownloadButton className="top-download">免费下载</DownloadButton>
       </header>
@@ -45,7 +47,7 @@ export function App() {
             <p className="platform-note">本地解析 · 密钥加密 · 零遥测</p>
           </div>
           <figure className="product-stage glass-panel">
-            <img src="/images/dashboard.png" alt="Token Manager 模型独立仪表盘，展示 DeepSeek 账户和本地用量状态" />
+            <img src={publicUrl("images/dashboard.png")} alt="Token Manager 模型独立仪表盘，展示 DeepSeek 账户和本地用量状态" />
             <figcaption>真实软件界面 · 数据来源始终明确标注</figcaption>
           </figure>
         </section>
@@ -56,9 +58,9 @@ export function App() {
 
         <section id="features" className="features section-pad">
           <header className="section-heading"><p className="eyebrow">ONE LOCAL CONTROL CENTER</p><h2>从余额，到每一次调用。</h2><p>不是只看一个总数。每个平台、每个账户、每个模型都有清晰的数据边界。</p></header>
-          <FeatureRow number="01 / CODEX" title="不需要 API Key，直接读取本地日志。" image="/images/dashboard.png" alt="Codex 与模型用量仪表盘界面" bullets={["生成、调试、问答三类消耗拆分", "20% / 10% 两档本地预警", "剩余开发时长与任务数量换算", "高消耗会话识别与省钱建议"]}>自动发现并增量解析 Codex 日志，统计 Token、模型、会话时间和任务类型。5 小时与 7 天滚动额度基于本地观测模拟，并明确标注为参考值。</FeatureRow>
-          <FeatureRow reverse number="02 / FLOATING WINDOW" title="用量始终在眼前，不打断开发。" image="/images/floating-window.png" alt="Token Manager 模块化悬浮窗" bullets={["完整模式与仅保留两个指标的迷你模式", "柱状图、折线图与环形进度交互", "鼠标悬停显示精确数值", "托盘常驻与实时代理状态"]}>可拖动、置顶、缩放的桌面悬浮窗，把 Token、余额、预算和趋势图压缩成轻量信息层。模块可增删、排序并永久保存。</FeatureRow>
-          <FeatureRow number="03 / YOUR DASHBOARD" title="每个模型，一张独立仪表盘。" image="/images/settings.png" alt="Token Manager 设置和悬浮窗自定义界面" bullets={["消费、Token、请求与缓存趋势", "模型级预算和异常消耗提醒", "按模型导出 Excel 兼容账单", "官方余额、本地代理、账单导入状态分开显示"]}>Token 放在首位，余额和成本分层呈现。所有卡片均可拖动调整，并自动补齐空位；简单模式与高级模式可以全局切换。</FeatureRow>
+          <FeatureRow number="01 / CODEX" title="不需要 API Key，直接读取本地日志。" image={publicUrl("images/dashboard.png")} alt="Codex 与模型用量仪表盘界面" bullets={["生成、调试、问答三类消耗拆分", "20% / 10% 两档本地预警", "剩余开发时长与任务数量换算", "高消耗会话识别与省钱建议"]}>自动发现并增量解析 Codex 日志，统计 Token、模型、会话时间和任务类型。5 小时与 7 天滚动额度基于本地观测模拟，并明确标注为参考值。</FeatureRow>
+          <FeatureRow reverse number="02 / FLOATING WINDOW" title="用量始终在眼前，不打断开发。" image={publicUrl("images/floating-window.png")} alt="Token Manager 模块化悬浮窗" bullets={["完整模式与仅保留两个指标的迷你模式", "柱状图、折线图与环形进度交互", "鼠标悬停显示精确数值", "托盘常驻与实时代理状态"]}>可拖动、置顶、缩放的桌面悬浮窗，把 Token、余额、预算和趋势图压缩成轻量信息层。模块可增删、排序并永久保存。</FeatureRow>
+          <FeatureRow number="03 / YOUR DASHBOARD" title="每个模型，一张独立仪表盘。" image={publicUrl("images/settings.png")} alt="Token Manager 设置和悬浮窗自定义界面" bullets={["消费、Token、请求与缓存趋势", "模型级预算和异常消耗提醒", "按模型导出 Excel 兼容账单", "官方余额、本地代理、账单导入状态分开显示"]}>Token 放在首位，余额和成本分层呈现。所有卡片均可拖动调整，并自动补齐空位；简单模式与高级模式可以全局切换。</FeatureRow>
         </section>
 
         <section id="providers" className="providers section-pad">
@@ -72,8 +74,8 @@ export function App() {
         </section>
 
         <section id="download" className="download-section section-pad">
-          <div className="download-main"><img src="/images/token-manager-icon.png" alt="Token Manager 图标" /><p className="eyebrow">TOKEN MANAGER v0.6.0</p><h2>准备好看清每一次消耗了吗？</h2><p>支持 Windows 10 / 11 64 位。国产 API 功能无需特殊网络；海外平台访问取决于用户自身网络和账户权限。</p><DownloadButton>下载安装版 · 4.93 MB</DownloadButton></div>
-          <aside className="download-details glass-panel"><h3>下载选项</h3><a href="/downloads/TokenManager_0.6.0_x64-setup.exe" download><span>NSIS 安装版</span><small>推荐 · 自动创建快捷方式</small></a><a href="/downloads/TokenManager_0.6.0_portable.exe" download><span>便携单文件版</span><small>17.06 MB · 无需安装</small></a><div className="checksum"><span>安装版 SHA-256</span><code>1C9E2E8D…B5AAF819</code></div><div className="checksum"><span>便携版 SHA-256</span><code>B7E1A7B7…DED202E2</code></div></aside>
+          <div className="download-main"><img src={publicUrl("images/token-manager-icon.png")} alt="Token Manager 图标" /><p className="eyebrow">TOKEN MANAGER v0.6.0</p><h2>准备好看清每一次消耗了吗？</h2><p>支持 Windows 10 / 11 64 位。国产 API 功能无需特殊网络；海外平台访问取决于用户自身网络和账户权限。</p><DownloadButton>下载安装版 · 4.93 MB</DownloadButton></div>
+          <aside className="download-details glass-panel"><h3>下载选项</h3><a href={publicUrl("downloads/TokenManager_0.6.0_x64-setup.exe")} download><span>NSIS 安装版</span><small>推荐 · 自动创建快捷方式</small></a><a href={publicUrl("downloads/TokenManager_0.6.0_portable.exe")} download><span>便携单文件版</span><small>17.06 MB · 无需安装</small></a><div className="checksum"><span>安装版 SHA-256</span><code>1C9E2E8D…B5AAF819</code></div><div className="checksum"><span>便携版 SHA-256</span><code>B7E1A7B7…DED202E2</code></div></aside>
         </section>
 
         <section id="faq" className="faq section-pad"><header className="section-heading"><p className="eyebrow">FAQ</p><h2>下载之前，你可能想知道。</h2></header><div className="faq-list">
@@ -85,7 +87,7 @@ export function App() {
         </div></section>
       </main>
 
-      <footer className="section-pad"><a className="brand" href="#top"><img src="/images/token-manager-icon.png" alt="" /><span>Token Manager</span></a><p>本地 AI 用量监控，为 Windows 开发者而生。</p><span>© 2026 Token Manager</span></footer>
+      <footer className="section-pad"><a className="brand" href="#top"><img src={publicUrl("images/token-manager-icon.png")} alt="" /><span>Token Manager</span></a><p>本地 AI 用量监控，为 Windows 开发者而生。</p><span>© 2026 Token Manager</span></footer>
     </div>
   );
 }
