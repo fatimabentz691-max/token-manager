@@ -15,15 +15,17 @@ const facts = [
 const publicUrl = (path) => `${import.meta.env.BASE_URL}${path.replace(/^\//, "")}`;
 const cloudBaseUrl = "https://token-manager-cloud.netlify.app";
 const fallbackRelease = {
-  version: "0.7.1",
-  title: "实时监控与管理后台增强版",
-  download_href: publicUrl("downloads/TokenManager_0.7.1_x64-setup.exe"),
-  file_name: "TokenManager_0.7.1_x64-setup.exe",
-  size_bytes: 8017919,
-  sha256: "4875F28550739E3EBC2CFBB27B51B65D6EA96F1446569DDBD4CAC9B9B99CAAB0",
-  published_at: "2026-07-26T00:00:00.000Z",
-  notes: "全平台实时刷新、DeepSeek V4 Pro 统计、匿名在线设备与下载管理。",
+  version: "0.7.3",
+  title: "液态玻璃主题版",
+  download_href: publicUrl("downloads/TokenManager_0.7.3_x64-setup.exe"),
+  file_name: "TokenManager_0.7.3_x64-setup.exe",
+  size_bytes: 8039126,
+  sha256: "613862119FE63EE86DF4D66459FBAD7C50123C8015BB530B301B0D2948B16B31",
+  published_at: "2026-07-27T03:10:00.000Z",
+  notes: "新增覆盖主界面与悬浮窗的液态玻璃主题、醒目快捷开关，以及高质量与性能优先两档渲染模式。",
 };
+
+const versionNumber = (value) => String(value || "").split(".").reduce((total, part) => total * 1000 + (Number.parseInt(part, 10) || 0), 0);
 
 function DownloadButton({ children, href, className = "" }) {
   return <a className={`download-button ${className}`} href={href}>{children}</a>;
@@ -39,7 +41,11 @@ export function App() {
     const controller = new AbortController();
     fetch(`${cloudBaseUrl}/v1/release/latest`, { signal: controller.signal })
       .then(response => response.ok ? response.json() : Promise.reject())
-      .then(data => setRelease({ ...fallbackRelease, ...data, download_href: `${cloudBaseUrl}/v1/download/latest` }))
+      .then(data => {
+        if (versionNumber(data.version) >= versionNumber(fallbackRelease.version)) {
+          setRelease({ ...fallbackRelease, ...data, download_href: `${cloudBaseUrl}/v1/download/latest` });
+        }
+      })
       .catch(() => {});
     return () => {
       controller.abort();
@@ -68,7 +74,7 @@ export function App() {
             <p className="platform-note">本地解析 · 密钥加密 · 不上传代码与日志</p>
           </div>
           <figure className="product-stage glass-panel">
-            <img src={publicUrl("images/dashboard.png")} alt="Token Manager 模型独立仪表盘，展示 DeepSeek 账户和本地用量状态" />
+            <img src={publicUrl("images/dashboard-liquid-glass.png")} alt="Token Manager 液态玻璃 AI 控制中心" />
             <figcaption>真实软件界面 · 数据来源始终明确标注</figcaption>
           </figure>
         </section>
@@ -80,9 +86,9 @@ export function App() {
         <section id="features" className="features section-pad">
           <header className="section-heading"><p className="eyebrow">ONE LOCAL CONTROL CENTER</p><h2>从余额，到每一次调用。</h2><p>不是只看一个总数。每个平台、每个账户、每个模型都有清晰的数据边界。</p></header>
           <FeatureRow number="01 / CODEX" title="不需要 API Key，直接读取客户端额度。" image={publicUrl("images/dashboard.png")} alt="Codex 与模型用量仪表盘界面" bullets={["客户端 rate_limits 百分比与倒计时", "生成、调试、问答三类消耗拆分", "20% / 10% 两档本地预警", "缺失窗口自动切换个人预算估算"]}>自动发现并增量解析 Codex 日志，同时读取客户端已经落盘的额度状态。数据源在界面中逐项标注，不读取或复用登录凭据。</FeatureRow>
-          <FeatureRow reverse number="02 / LIVE MONITORING" title="请求结束就统计，不再等待整页刷新。" image={publicUrl("images/floating-window.png")} alt="Token Manager 分类悬浮窗" bullets={["代理事件完成后立即刷新本地统计", "5 秒轻量兜底轮询，30 秒完整同步", "DeepSeek 余额 10 秒同步", "启动软件自动恢复已保存账户的代理通道"]}>全平台 OpenAI 兼容调用通过本机代理统一记录；流式响应保持流畅，并在结束块写入输入、输出、缓存 Token、请求次数和人民币成本。悬浮窗同步获得相同数据。</FeatureRow>
+          <FeatureRow reverse number="02 / LIVE MONITORING" title="开启代理，也自动接好调用工具。" image={publicUrl("images/floating-window.png")} alt="Token Manager 分类悬浮窗" bullets={["自动配置常见 Code、SDK 与 Claude Code", "连接修改前自动备份并支持一键恢复", "代理事件完成后立即刷新本地统计", "5 秒轻量兜底轮询，30 秒完整同步"]}>选择账户后点击一次，Token Manager 会启动本机代理并写入对应的用户级连接配置。重启已经运行的调用工具后，请求会自动进入统计链路，无需手工复制 Base URL。</FeatureRow>
           <FeatureRow number="03 / DEEPSEEK V4 PRO" title="V4 Pro 的余额、Token 与成本，对得上。" image={publicUrl("images/dashboard.png")} alt="DeepSeek V4 Pro 独立仪表盘" bullets={["OpenAI 与 Anthropic 两种本机入口", "V4 Pro 与 Claude Opus 别名统一归档", "流式 usage 自动提取", "余额扣减未经过代理时主动告警"]}>Token Manager 会区分“代理已启动”和“请求真正进入代理”。只有真实调用到达后状态才变为正在接收，避免余额改变却没有 Token 记录的假连接。</FeatureRow>
-          <FeatureRow reverse number="04 / CONTROL CENTER" title="悬浮窗设置与实时链路，一眼可控。" image={publicUrl("images/settings.png")} alt="Token Manager 全新悬浮窗设置与实时预览界面" bullets={["图表与摘要模块分组开关", "拖拽排序、双列或单列布局", "迷你模式独立选择两个核心模块", "API 代理与 CC Switch 联合状态栏"]}>全新的悬浮窗设置二级页面集中管理启停、布局、模块与迷你模式，并在右侧实时预览。主界面常驻显示代理通道和 CC Switch 状态，不再依赖临时提示。</FeatureRow>
+          <FeatureRow reverse number="04 / LIQUID GLASS" title="一键开启液态玻璃，所有窗口实时同步。" image={publicUrl("images/settings-liquid-glass.png")} alt="Token Manager 液态玻璃主题快捷设置" bullets={["主界面、仪表盘与悬浮窗统一材质", "独立快捷开关明确显示启停状态", "高质量与性能优先两档渲染", "动画、粒子与低性能设备自动降级"]}>设置页新增醒目的液态玻璃快捷控制，点击即可同步到主窗口与桌面悬浮窗。多层透射、边缘高光和空间环境光均可按设备性能调整，设置重启后不会丢失。</FeatureRow>
           <FeatureRow number="05 / PROMPT CENTER" title="Prompt 不再散落，保存、检索、复用都在本机。" image={publicUrl("images/prompt-center.png")} alt="Token Manager Prompt 中心" bullets={["分类、收藏、最近与常用视图", "名称、标签、内容和模型联合检索", "发送前本地质量检查与优化建议", "模板、历史和统计不上传云端"]}>Prompt Center 把高频开发提示词变成可以持续积累的本地资产。支持编辑、收藏、复制、分享，以及针对结构、约束与输出格式的质量检查。</FeatureRow>
           <FeatureRow reverse number="06 / ARENA" title="每天刷新 Arena 排行，用公开数据辅助选模型。" image={publicUrl("images/arena.png")} alt="Token Manager Arena 模型排行榜" bullets={["官方公开榜单快照与本地缓存", "模型分数、上下文和价格对照", "能力雷达图与自定义模型", "离线时明确显示最近缓存日期"]}>Arena 页面在联网时检查公开榜单，无法访问时回退到最近一次本地缓存，并始终显示数据日期和来源，避免把历史快照误标成实时结果。</FeatureRow>
         </section>
