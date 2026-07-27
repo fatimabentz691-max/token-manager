@@ -15,14 +15,14 @@ const facts = [
 const publicUrl = (path) => `${import.meta.env.BASE_URL}${path.replace(/^\//, "")}`;
 const cloudBaseUrl = "https://token-manager-cloud.netlify.app";
 const fallbackRelease = {
-  version: "0.7.3",
-  title: "液态玻璃主题版",
-  download_href: publicUrl("downloads/TokenManager_0.7.3_x64-setup.exe"),
-  file_name: "TokenManager_0.7.3_x64-setup.exe",
-  size_bytes: 8039126,
-  sha256: "613862119FE63EE86DF4D66459FBAD7C50123C8015BB530B301B0D2948B16B31",
-  published_at: "2026-07-27T03:10:00.000Z",
-  notes: "新增覆盖主界面与悬浮窗的液态玻璃主题、醒目快捷开关，以及高质量与性能优先两档渲染模式。",
+  version: "0.7.4",
+  title: "弹簧动效与仪表盘修复版",
+  download_href: publicUrl("downloads/TokenManager_0.7.4_x64-setup.exe"),
+  file_name: "TokenManager_0.7.4_x64-setup.exe",
+  size_bytes: 8038371,
+  sha256: "B21A48558CFC889B7F55DEFE52623E050F07069346995F674760122A19411D65",
+  published_at: "2026-07-27T03:35:29.000Z",
+  notes: "修复 DeepSeek V4 PRO 卡片圆角与微光冲突，新增可独立开关的完整弹簧动效。",
 };
 
 const versionNumber = (value) => String(value || "").split(".").reduce((total, part) => total * 1000 + (Number.parseInt(part, 10) || 0), 0);
