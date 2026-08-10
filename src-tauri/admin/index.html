@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Token Manager 管理后台</title>
+  <style>
+    :root{font-family:"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei UI",sans-serif;color:#1d1d1f;background:#f5f5f7;font-synthesis:none}
+    *{box-sizing:border-box}body{margin:0}button,input,textarea,select{font:inherit}button{cursor:pointer}
+    .shell{max-width:1240px;margin:auto;padding:28px 28px 64px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:26px}
+    .brand{display:flex;align-items:center;gap:13px}.mark{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:#111;color:#fff;font-weight:700}.brand h1{font-size:22px;margin:0}.brand p{font-size:13px;color:#86868b;margin:3px 0 0}
+    .auth{display:flex;gap:10px;align-items:center}.auth input{width:250px}.control,input,textarea,select{border:1px solid #dedee3;background:#fff;border-radius:12px;color:#1d1d1f;outline:none;transition:border-color .2s,box-shadow .2s}.control,input,select{height:42px;padding:0 13px}textarea{width:100%;min-height:108px;padding:12px 13px;resize:vertical}.control:focus,input:focus,textarea:focus,select:focus{border-color:#86868b;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
+    .button{height:42px;border:0;border-radius:12px;padding:0 17px;background:#1d1d1f;color:#fff;font-weight:600}.button.secondary{background:#fff;color:#1d1d1f;border:1px solid #dedee3}.button.danger{height:34px;background:#fff;color:#b42318;border:1px solid #ead3d0;font-size:13px}
+    .status{display:flex;align-items:center;gap:7px;font-size:13px;color:#86868b}.dot{width:8px;height:8px;border-radius:50%;background:#c7c7cc}.status.connected .dot{background:#34c759}
+    .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:26px}.metric,.panel{background:#fff;border:1px solid #e8e8ed;border-radius:18px}.metric{padding:18px 19px;min-height:112px}.metric span{font-size:13px;color:#86868b}.metric strong{display:block;font-size:30px;letter-spacing:-1px;margin-top:15px}.metric small{display:block;color:#86868b;margin-top:3px}
+    .grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(360px,.95fr);gap:16px}.panel{padding:22px}.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:20px}.panel h2{font-size:18px;margin:0}.panel-head p{font-size:13px;color:#86868b;margin:5px 0 0}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.field{display:flex;flex-direction:column;gap:7px}.field.full{grid-column:1/-1}.field label{font-size:13px;font-weight:600}.check{display:flex;align-items:center;gap:9px;height:42px}.check input{width:18px;height:18px;accent-color:#1d1d1f}.actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+    .content-list{display:flex;flex-direction:column;gap:10px}.item{border:1px solid #e8e8ed;border-radius:15px;padding:15px}.item-top{display:flex;align-items:center;justify-content:space-between;gap:10px}.kind{display:inline-flex;align-items:center;border-radius:99px;background:#f2f2f7;padding:5px 9px;font-size:11px;font-weight:700}.item h3{font-size:15px;margin:11px 0 6px}.item p{font-size:13px;line-height:1.65;color:#6e6e73;margin:0;white-space:pre-wrap}.item-meta{display:flex;justify-content:space-between;gap:10px;align-items:flex-end;margin-top:13px;font-size:11px;color:#86868b}.empty{display:grid;place-items:center;min-height:250px;color:#86868b;text-align:center;line-height:1.7}.toast{position:fixed;right:24px;bottom:24px;max-width:360px;padding:13px 16px;border-radius:13px;background:#1d1d1f;color:#fff;font-size:13px;opacity:0;transform:translateY(8px);pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:none}
+    @media(max-width:900px){.metrics{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}.topbar{align-items:flex-start;flex-direction:column}.auth{width:100%}.auth input{flex:1;width:auto}}
+    @media(max-width:560px){.shell{padding:20px 16px 48px}.metrics{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.field.full{grid-column:auto}.auth{flex-wrap:wrap}.auth input{width:100%;flex-basis:100%}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><div class="mark">TM</div><div><h1>Token Manager 管理后台</h1><p>匿名软件使用概览、公告与广告管理</p></div></div>
+      <div class="auth"><div id="status" class="status"><i class="dot"></i><span>尚未连接</span></div><input id="adminKey" type="password" autocomplete="current-password" placeholder="输入管理密钥"><button id="connect" class="button">连接后台</button></div>
+    </header>
+    <section id="metrics" class="metrics" aria-label="软件使用与服务指标"></section>
+    <section class="grid">
+      <form id="contentForm" class="panel">
+        <div class="panel-head"><div><h2>发布内容</h2><p>公告与广告会同步到桌面客户端，可设置投放周期。</p></div></div>
+        <div class="form-grid">
+          <div class="field"><label for="kind">内容类型</label><select id="kind"><option value="announcement">软件公告</option><option value="ad">广告</option></select></div>
+          <div class="field"><label for="title">标题</label><input id="title" maxlength="80" required placeholder="例如：新版监控能力已上线"></div>
+          <div class="field full"><label for="body">正文</label><textarea id="body" maxlength="500" required placeholder="输入用户会在软件内看到的内容"></textarea></div>
+          <div class="field"><label for="actionLabel">按钮文字（可选）</label><input id="actionLabel" maxlength="30" placeholder="了解详情"></div>
+          <div class="field"><label for="actionUrl">HTTPS 跳转地址（可选）</label><input id="actionUrl" type="url" placeholder="https://..."></div>
+          <div class="field"><label for="startsAt">开始时间</label><input id="startsAt" type="datetime-local"></div>
+          <div class="field"><label for="endsAt">结束时间（可选）</label><input id="endsAt" type="datetime-local"></div>
+          <div class="field full"><label class="check"><input id="enabled" type="checkbox" checked>立即启用此内容</label></div>
+        </div>
+        <div class="actions"><button type="reset" class="button secondary">清空</button><button type="submit" class="button">发布到软件</button></div>
+      </form>
+      <section class="panel">
+        <div class="panel-head"><div><h2>已发布内容</h2><p>广告会明确标记为“广告”，用户可以关闭。</p></div><button id="refresh" class="button secondary">刷新</button></div>
+        <div id="contentList" class="content-list"><div class="empty">连接管理后台后显示内容</div></div>
+      </section>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status"></div>
+  <script>
+    const $=id=>document.getElementById(id);let adminKey=sessionStorage.getItem('tm-admin-key')||'';
+    if(!adminKey&&['127.0.0.1','localhost'].includes(location.hostname))adminKey='token-manager-local-admin';$('adminKey').value=adminKey;
+    const metricDefs=[['total_installations','累计使用设备','匿名安装实例'],['online_installations','当前在线','5 分钟内有心跳'],['active_installations_24h','24 小时使用','无需登录'],['active_installations_7d','7 天使用','无需登录'],['active_transfer_links','迁移链接','当前有效'],['active_announcements','有效公告','投放中'],['active_ads','有效广告','投放中']];
+    function toast(message){const el=$('toast');el.textContent=message;el.classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('show'),2400)}
+    async function api(path,options={}){adminKey=$('adminKey').value.trim();const response=await fetch(path,{...options,headers:{'X-Admin-Key':adminKey,'Content-Type':'application/json',...(options.headers||{})}});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||`请求失败 (${response.status})`);return data}
+    function setConnected(ok){$('status').classList.toggle('connected',ok);$('status').querySelector('span').textContent=ok?'已连接':'连接失败'}
+    async function load(){try{const [metrics,contents]=await Promise.all([api('/v1/admin/metrics'),api('/v1/admin/content')]);sessionStorage.setItem('tm-admin-key',adminKey);setConnected(true);renderMetrics(metrics);renderContents(contents.items||[])}catch(error){setConnected(false);toast(error.message)}}
+    function renderMetrics(data){const wrap=$('metrics');wrap.replaceChildren(...metricDefs.map(([key,label,note])=>{const card=document.createElement('article');card.className='metric';const caption=document.createElement('span');caption.textContent=label;const value=document.createElement('strong');value.textContent=Number(data[key]||0).toLocaleString('zh-CN');const small=document.createElement('small');small.textContent=note;card.append(caption,value,small);return card}))}
+    function renderContents(items){const wrap=$('contentList');if(!items.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='还没有发布内容\n从左侧创建第一条公告或广告';wrap.replaceChildren(empty);return}wrap.replaceChildren(...items.map(item=>{const box=document.createElement('article');box.className='item';const top=document.createElement('div');top.className='item-top';const kind=document.createElement('span');kind.className='kind';kind.textContent=item.kind==='ad'?'广告':'公告';const del=document.createElement('button');del.className='button danger';del.type='button';del.textContent='删除';del.addEventListener('click',()=>removeContent(item.id));top.append(kind,del);const title=document.createElement('h3');title.textContent=item.title+(item.enabled?'':'（已停用）');const body=document.createElement('p');body.textContent=item.body;const meta=document.createElement('div');meta.className='item-meta';const dates=document.createElement('span');dates.textContent=`开始：${new Date(item.starts_at).toLocaleString('zh-CN')}`;const action=document.createElement('span');action.textContent=item.action_url?(item.action_label||'含跳转链接'):'无跳转';meta.append(dates,action);box.append(top,title,body,meta);return box}))}
+    async function removeContent(id){if(!confirm('确认删除这条内容？'))return;try{await api(`/v1/admin/content/${encodeURIComponent(id)}`,{method:'DELETE'});toast('已删除');await load()}catch(error){toast(error.message)}}
+    function iso(id){const value=$(id).value;return value?new Date(value).toISOString():null}
+    $('contentForm').addEventListener('submit',async event=>{event.preventDefault();const payload={kind:$('kind').value,title:$('title').value,body:$('body').value,action_label:$('actionLabel').value,action_url:$('actionUrl').value,starts_at:iso('startsAt'),ends_at:iso('endsAt'),enabled:$('enabled').checked};try{await api('/v1/admin/content',{method:'POST',body:JSON.stringify(payload)});event.target.reset();$('enabled').checked=true;toast('已发布到软件');await load()}catch(error){toast(error.message)}});
+    $('connect').addEventListener('click',load);$('refresh').addEventListener('click',load);$('contentForm').addEventListener('reset',()=>setTimeout(()=>$('enabled').checked=true));
+    renderMetrics({});if(adminKey)load();
+  </script>
+</body>
+</html>

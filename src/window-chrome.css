@@ -1,0 +1,146 @@
+/* Token Manager 自绘 Windows 标题栏：把系统白条收进产品视觉体系。 */
+:root { --tm-titlebar-height: 2.5rem; }
+
+.app-titlebar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--tm-titlebar-height);
+  padding-left: .75rem;
+  border-bottom: 1px solid var(--tm-line, rgba(29,29,31,.1));
+  background: color-mix(in srgb, var(--tm-bg, #fff) 92%, transparent);
+  color: var(--tm-ink, #1d1d1f);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--tm-bg, #fff) 66%, transparent) inset;
+  backdrop-filter: blur(1.5rem) saturate(150%);
+  -webkit-backdrop-filter: blur(1.5rem) saturate(150%);
+  user-select: none;
+}
+
+.app-titlebar-brand {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: .55rem;
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+
+.app-titlebar-brand img {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: .38rem;
+  object-fit: cover;
+}
+
+.app-window-controls { display: flex; align-self: stretch; }
+.app-window-control {
+  display: grid;
+  place-items: center;
+  width: 2.875rem;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: currentColor !important;
+  box-shadow: none !important;
+}
+.app-window-control svg { width: .9rem; height: .9rem; stroke-width: 1.7; }
+.app-window-control:hover { background: color-mix(in srgb, var(--tm-ink, #1d1d1f) 8%, transparent) !important; }
+.app-window-control.app-window-close:hover { background: #e81123 !important; color: #fff !important; }
+.app-window-control:active { transform: none !important; }
+
+.shell > aside {
+  top: calc(var(--tm-titlebar-height) + .75rem) !important;
+  height: calc(100dvh - var(--tm-titlebar-height) - 1.5rem) !important;
+}
+.shell > .content { padding-top: calc(var(--tm-titlebar-height) + 1.5rem) !important; }
+
+/* 液态主题中的标题栏只是一层连续材质，不再形成额外悬浮白条。 */
+.theme-liquid-glass .app-titlebar {
+  inset: .3rem .5rem auto .5rem;
+  box-sizing: border-box;
+  height: calc(var(--tm-titlebar-height) - .6rem);
+  padding-left: .65rem;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 1rem;
+  background:
+    linear-gradient(110deg, rgba(255,255,255,.12), rgba(255,255,255,.025)),
+    rgba(5,8,16,.46);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 .5rem 1.5rem rgba(0,0,0,.12);
+  color: var(--tm-ink);
+}
+.glass-webgl-active .theme-liquid-glass .app-titlebar[data-liquid-optical-surface="true"] {
+  /* GPU 已绘制整条强弧形折射；DOM 只保留极薄体积色，避免重新盖住位移后的背景。 */
+  background:
+    linear-gradient(110deg, rgba(255,255,255,.105), rgba(255,255,255,.018) 52%, rgba(255,255,255,.075)),
+    rgba(5,8,16,.14) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.24),
+    inset 0 -1px 0 rgba(255,255,255,.075),
+    0 .38rem .8rem rgba(0,0,0,.12) !important;
+}
+.theme-liquid-glass .app-window-control {
+  width: 2.35rem;
+  height: 100%;
+  border-radius: 0 !important;
+}
+.theme-liquid-glass .app-window-controls {
+  align-self: center;
+  height: 1.5rem;
+  margin-right: .18rem;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--tm-ink) 12%, transparent);
+  border-radius: .72rem;
+  background: color-mix(in srgb, var(--tm-bg) 18%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--tm-bg) 72%, transparent);
+}
+.theme-liquid-glass .app-window-control + .app-window-control {
+  border-left: 1px solid color-mix(in srgb, var(--tm-ink) 9%, transparent) !important;
+}
+.theme-liquid-glass .app-window-control:first-child { border-radius: .65rem 0 0 .65rem !important; }
+.theme-liquid-glass .app-window-control:last-child { border-radius: 0 .65rem .65rem 0 !important; }
+.liquid-tone-clear .theme-liquid-glass .app-window-controls {
+  border-color: var(--tm-clear-glass-edge);
+  background: var(--tm-clear-glass-uniform);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7);
+}
+.liquid-tone-clear .theme-liquid-glass .app-titlebar {
+  border-color: rgba(23,23,26,.1);
+  background:
+    linear-gradient(110deg, rgba(255,255,255,.76), rgba(255,255,255,.28)),
+    rgba(255,255,255,.25);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.82), 0 .5rem 1.5rem rgba(45,52,66,.06);
+}
+
+/* 页面说明只承担信息层级，不再额外套一块折射玻璃，消除仪表盘上连续叠框。 */
+.theme-liquid-glass .dashboard-context-heading[data-liquid-ignore] {
+  overflow: visible !important;
+  padding: .25rem 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.theme-liquid-glass .dashboard-context-heading[data-liquid-ignore]::before,
+.theme-liquid-glass .dashboard-context-heading[data-liquid-ignore]::after { content: none !important; }
+
+/* 覆盖透明白自定义壁纸规则中的旧卡片底色；说明区永远不生成第二层玻璃。 */
+html[data-glass-background].liquid-tone-clear.glass-webgl-active .theme-liquid-glass .dashboard-context-heading[data-liquid-ignore] {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-window-control { transition: none !important; }
+}

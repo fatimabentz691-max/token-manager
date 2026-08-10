@@ -8,5 +8,32 @@ work/
 .codex/
 .agents/
 *.tmbak
+src-tauri/token-manager-server.db*
 .env
 .env.*
+
+# 本地凭据、账户数据与运行时数据库
+.gh-cli/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# 本机构建、测试与发布产物
+.tmp/
+tmp/
+.npm-cache-*/
+installer/
+screenshots/
+video/
+design-references/
+design-qa.md
+skills-lock.json
+
+# 官网与云后台为独立部署工作区，不属于桌面客户端源码包
+website/
+cloud-backend/
+
+# Local Netlify folder
+.netlify
