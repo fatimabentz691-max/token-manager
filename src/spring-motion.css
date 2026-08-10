@@ -1,0 +1,214 @@
+/* Token Manager 高动态模式：Motion 物理弹簧负责交互，CSS 只负责短促的入场与状态过渡。 */
+:root {
+  --tm-spring-out: linear(
+    0, .035 3%, .18 7%, .52 14%, .78 21%,
+    .94 29%, 1.012 40%, .998 60%, 1
+  );
+  --tm-motion-fast: 160ms;
+  --tm-motion-panel: 280ms;
+  --tm-motion-layout: 300ms;
+  --tm-ease-out: cubic-bezier(.22, 1, .36, 1);
+}
+
+/* DeepSeek V4 Pro 与通用账户区显式建立自己的圆角裁切边界。 */
+.deepseek-monitor,
+.deepseek-metrics,
+.model-kpis,
+.providers,
+.saved-accounts {
+  min-width: 0;
+}
+.deepseek-metrics > .card,
+.deepseek-monitor > .balance-chart,
+.model-kpis > .card,
+.provider-overview,
+.provider-overview-grid > span,
+.providers > .provider,
+.saved-accounts > div {
+  box-sizing: border-box;
+  border-radius: 16px !important;
+}
+.deepseek-metrics > .card,
+.deepseek-monitor > .balance-chart,
+.model-kpis > .card,
+.provider-overview,
+.providers > .provider {
+  overflow: hidden;
+}
+.provider-overview-grid > span,
+.saved-accounts > div {
+  overflow: clip;
+}
+.saved-accounts {
+  display: grid;
+  gap: 7px;
+}
+.saved-accounts > div {
+  padding: 9px 10px;
+  border: 1px solid var(--tm-line);
+  background: var(--tm-surface);
+}
+
+/* 微光严格由事件代理添加的单一 active class 控制，不再依赖会向父级冒泡的 :hover。 */
+:where(
+  .card, .provider-overview, .dashboard-empty, .visual-card, .model-bill,
+  .settings-nav, .settings-detail, .command-center, .retention-panel,
+  .conversion-strip, .monitor-status-bar, .dashboard-switcher,
+  .floating-dashboard-item, .status-capsule, .capsule-detail,
+  .remote-content, .prompt-card, .arena-card, .report-heading,
+  .floating-control-card, .floating-preview-card, .saved-accounts > div
+) {
+  --tm-card-pointer-x: 50%;
+  --tm-card-pointer-y: 50%;
+}
+.tm-spotlight-active {
+  position: relative;
+  isolation: isolate;
+  z-index: 2;
+}
+:where(
+  .card, .provider-overview, .dashboard-empty, .visual-card, .model-bill,
+  .settings-nav, .settings-detail, .command-center, .retention-panel,
+  .conversion-strip, .all-overview-grid > section, .all-overview-grid > aside,
+  .monitor-status-bar, .dashboard-switcher, .floating-dashboard-item,
+  .status-capsule, .capsule-detail, .remote-content, .prompt-card,
+  .arena-card, .report-heading, .floating-control-card, .floating-preview-card,
+  .saved-accounts > div
+).tm-spotlight-active::after {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      circle 9rem at var(--tm-card-pointer-x) var(--tm-card-pointer-y),
+      color-mix(in srgb, var(--tm-spotlight) 26%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      circle 17rem at var(--tm-card-pointer-x) var(--tm-card-pointer-y),
+      color-mix(in srgb, var(--tm-spotlight) 12%, transparent),
+      transparent 76%
+    );
+  content: "";
+  opacity: 1;
+  pointer-events: none;
+}
+.theme-dark :where(
+  .card, .provider-overview, .dashboard-empty, .visual-card, .model-bill,
+  .settings-nav, .settings-detail, .command-center, .retention-panel,
+  .conversion-strip, .all-overview-grid > section, .all-overview-grid > aside,
+  .monitor-status-bar, .dashboard-switcher, .floating-dashboard-item,
+  .status-capsule, .capsule-detail, .remote-content, .prompt-card,
+  .arena-card, .report-heading, .floating-control-card, .floating-preview-card,
+  .saved-accounts > div
+).tm-spotlight-active::after {
+  background:
+    radial-gradient(
+      circle 9rem at var(--tm-card-pointer-x) var(--tm-card-pointer-y),
+      color-mix(in srgb, var(--tm-spotlight) 34%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      circle 18rem at var(--tm-card-pointer-x) var(--tm-card-pointer-y),
+      color-mix(in srgb, var(--tm-spotlight) 16%, transparent),
+      transparent 78%
+    );
+}
+.theme-liquid-glass :where(
+  .card, .provider-overview, .dashboard-empty, .visual-card, .model-bill,
+  .settings-nav, .settings-detail, .command-center, .retention-panel,
+  .conversion-strip, .all-overview-grid > section, .all-overview-grid > aside,
+  .monitor-status-bar, .dashboard-switcher, .floating-dashboard-item,
+  .status-capsule, .capsule-detail, .remote-content, .prompt-card,
+  .arena-card, .report-heading, .floating-control-card, .floating-preview-card,
+  .saved-accounts > div
+).tm-spotlight-active::after {
+  background:
+    linear-gradient(112deg, rgba(255,255,255,.18), transparent 22% 74%, color-mix(in srgb, var(--tm-spotlight) 12%, transparent)),
+    radial-gradient(
+      circle 10rem at var(--tm-card-pointer-x) var(--tm-card-pointer-y),
+      color-mix(in srgb, var(--tm-spotlight) 38%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      circle 20rem at var(--tm-card-pointer-x) var(--tm-card-pointer-y),
+      color-mix(in srgb, var(--tm-glow) 18%, transparent),
+      transparent 78%
+    );
+}
+.spotlight-off .tm-spotlight-active::after {
+  opacity: 0 !important;
+}
+
+/*
+ * 鼠标表面与按压使用 Motion 的可中断物理弹簧。
+ * translate / scale 是独立合成属性，不再与主题 hover 的 transform 抢占同一通道。
+ */
+.spring-motion-on:not(.motion-off) .tm-motion-surface {
+  transform: none !important;
+  translate: 0 var(--tm-surface-lift, 0);
+  scale: var(--tm-surface-scale, 1);
+  will-change: translate, scale;
+}
+.spring-motion-on:not(.motion-off) .tm-motion-control {
+  scale: var(--tm-control-scale, 1);
+  will-change: scale;
+}
+.spring-motion-on:not(.motion-off) .tm-motion-control:active {
+  transform: none !important;
+}
+
+/* 页面、弹窗、图表和开关使用同一套短促节奏，不再叠加两次超调。 */
+.spring-motion-on:not(.motion-off) .page-panel {
+  animation: tm-spring-panel var(--tm-motion-panel) var(--tm-spring-out) both !important;
+}
+.spring-motion-on:not(.motion-off) :where(
+  .metric-bar > i, .usage-bar > i, .token-stack > i,
+  .floating-chart-bars i, .mini-bar i, .provider-ranking em
+) {
+  transform-origin: bottom;
+  animation: tm-spring-grow 340ms var(--tm-ease-out) both !important;
+}
+.spring-motion-on:not(.motion-off) :where(
+  .modal-fade-enter-active .config-modal,
+  .prompt-modal-backdrop > section,
+  .arena-modal-backdrop > section,
+  .capsule-detail
+) {
+  transition:
+    transform 300ms var(--tm-spring-out),
+    opacity 180ms var(--tm-ease-out) !important;
+}
+.spring-motion-on:not(.motion-off) :where(
+  .switch-row input::after,
+  .floating-check::after,
+  .liquid-glass-state > i em
+) {
+  transition: transform 260ms var(--tm-spring-out), background-color var(--tm-motion-fast) ease !important;
+}
+
+@keyframes tm-spring-panel {
+  0% { opacity: 0; transform: translate3d(0,6px,0) scale(.997); }
+  100% { opacity: 1; transform: translate3d(0,0,0) scale(1); }
+}
+@keyframes tm-spring-grow {
+  0% { transform: scaleY(.04); opacity: .3; }
+  100% { transform: scaleY(1); opacity: 1; }
+}
+
+.spring-motion-off :where(.tm-spring-surface, button, [role="button"]) {
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tm-motion-surface,
+  .tm-motion-control {
+    translate: none !important;
+    scale: 1 !important;
+    will-change: auto !important;
+  }
+  .spring-motion-on .page-panel,
+  .spring-motion-on :where(.metric-bar > i, .usage-bar > i, .token-stack > i, .floating-chart-bars i, .mini-bar i, .provider-ranking em) {
+    animation: none !important;
+  }
+}

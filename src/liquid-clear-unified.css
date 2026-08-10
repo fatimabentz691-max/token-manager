@@ -1,0 +1,337 @@
+/*
+ * 透明白液态玻璃统一层
+ * 该文件最后加载，只负责 clear liquid 形态：统一光学材质、文字对比度与图表强调色。
+ */
+html.liquid-tone-clear {
+  --tm-clear-glass-uniform: linear-gradient(145deg, rgba(255,255,255,.3), rgba(255,255,255,.08));
+  --tm-clear-glass-primary: var(--tm-clear-glass-uniform);
+  --tm-clear-glass-card: var(--tm-clear-glass-uniform);
+  --tm-clear-glass-inner: var(--tm-clear-glass-uniform);
+  --tm-clear-glass-edge: rgba(29,29,31,.14);
+  --tm-clear-glass-highlight: rgba(255,255,255,.72);
+  --tm-clear-glass-shadow: 0 .7rem 1.9rem rgba(29,29,31,.055), inset 0 1px 0 rgba(255,255,255,.7);
+}
+
+html.liquid-tone-clear body,
+html.liquid-tone-clear #app,
+html.liquid-tone-clear .theme-liquid-glass.shell,
+html.liquid-tone-clear .theme-liquid-glass .content {
+  background: transparent !important;
+  color: var(--tm-ink) !important;
+}
+
+/* 侧边栏外壳与内容卡片必须使用同一透明材质；同时覆盖旧版和自定义壁纸的高优先级规则。 */
+html.liquid-tone-clear .theme-liquid-glass.shell > aside,
+html.liquid-tone-clear[data-glass-background="custom"] .theme-liquid-glass.shell > aside,
+html.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass.shell > aside {
+  border-color: var(--tm-clear-glass-edge) !important;
+  background: var(--tm-clear-glass-uniform) !important;
+  background-image: var(--tm-clear-glass-uniform) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: var(--tm-clear-glass-shadow) !important;
+}
+
+/* WebGL 不可用时仍显示明亮壁纸和真实模糊，不退回深色或普通白卡片。 */
+html.liquid-tone-clear.glass-webgl-fallback .liquid-glass-environment {
+  background:
+    radial-gradient(circle at var(--glass-pointer-x) var(--glass-pointer-y), color-mix(in srgb,var(--tm-accent) 10%,transparent), transparent 30rem),
+    linear-gradient(145deg,#f8fafc,#eef1f5 52%,#fff) !important;
+}
+html.liquid-tone-clear .glass-user-background,
+html.liquid-tone-clear .liquid-video-source {
+  filter: saturate(.88) contrast(.96) brightness(1.06) !important;
+}
+
+/* 一级空间材质：标题区和侧边栏保持更稳定的可读背板，但仍可看见折射背景。 */
+html.liquid-tone-clear .theme-liquid-glass :where(.app-titlebar,.content > header,.shell > aside) {
+  border-color: var(--tm-clear-glass-edge) !important;
+  background: var(--tm-clear-glass-primary) !important;
+  background-image: var(--tm-clear-glass-primary) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: var(--tm-clear-glass-shadow) !important;
+}
+
+/* 二级光学表面：所有页面卡片共享同一透明度、边缘和高光。 */
+html.liquid-tone-clear .theme-liquid-glass :where(
+  .card,.visual-card,.provider-overview,.dashboard-empty,.model-bill,
+  .settings-nav,.settings-detail,.conversion-strip,
+  .all-overview-grid > section,.all-overview-grid > aside,
+  .monitor-status-bar,.dashboard-switcher,.remote-content,.prompt-card,
+  .arena-card,.report-heading,.floating-control-card,.floating-preview-card,
+  .all-summary,.floating-dashboard-item,.status-capsule,.capsule-detail,
+  .remote-content,.arena-source,.arena-commandbar,.arena-table,.arena-detail,
+  .prompt-categories,.quality-panel,.glass-distortion-control,
+  .liquid-appearance-panel,.liquid-glass-quick-control,.monochrome-note
+) {
+  border-color: var(--tm-clear-glass-edge) !important;
+  background: var(--tm-clear-glass-card) !important;
+  background-image: var(--tm-clear-glass-card) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: var(--tm-clear-glass-shadow) !important;
+}
+
+/* 内部统计块只有轻微体积色，不再次形成一整块不透明白板。 */
+html.liquid-tone-clear .theme-liquid-glass :where(
+  input:not([type="checkbox"]):not([type="radio"]),select,textarea,code,
+  .segmented,.token-range,.token-chart-summary > span,.prompt-stats > *,
+  .model-stat-grid > article,.model-kpis > article,.deepseek-metrics > article,
+  .monitor-signal,.connection-state,.cc-switch-state,.floating-focus-summary,
+  .floating-focus-selector,.floating-focus-stats > span,.floating-focus-chart,
+  .floating-chart-tabs,.floating-chart-empty,.capsule-stats > span,
+  .token-chart-summary > span,.today-model-item,.saved-accounts > div
+) {
+  border-color: color-mix(in srgb,var(--tm-ink) 11%,transparent) !important;
+  background: var(--tm-clear-glass-inner) !important;
+  background-image: var(--tm-clear-glass-inner) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.82) !important;
+}
+
+/* 与深色液态主题采用同一三级材质层级：外壳、卡片、内嵌控件。 */
+html.liquid-tone-clear .theme-liquid-glass :where(
+  .shell > aside .brand,.shell > aside nav,.shell > aside .privacy,.sidebar-material-footer,
+  .settings-nav > button,.settings-detail li,.global-mode button,.theme-grid button,
+  .switch-row,.inline-control,.mini-box,.motion-settings,.floating-list label,
+  .glass-quality-control,.liquid-tone-control,.liquid-video-control,
+  .chart-color-grid > button,.theme-trigger,.monitor-launch,.monitor-status-action
+) {
+  border-color: color-mix(in srgb,var(--tm-ink) 12%,transparent) !important;
+  background: var(--tm-clear-glass-inner) !important;
+  background-image: var(--tm-clear-glass-inner) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.58) !important;
+}
+
+/* 标题栏参与真实折射，并在底部逐渐隐去，避免形成独立白条。 */
+html.liquid-tone-clear .theme-liquid-glass .app-titlebar {
+  border: 1px solid var(--tm-clear-glass-edge) !important;
+  border-radius: 1rem !important;
+  background: var(--tm-clear-glass-uniform) !important;
+  background-image: var(--tm-clear-glass-uniform) !important;
+  box-shadow: var(--tm-clear-glass-shadow) !important;
+}
+html.liquid-tone-clear .theme-liquid-glass .app-window-control:not(.app-window-close):hover {
+  background: color-mix(in srgb,var(--tm-ink) 7%,transparent) !important;
+}
+
+/* 自定义图片/视频壁纸不能重新把玻璃覆盖成高不透明白板。 */
+html.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass :where(
+  .app-titlebar,.content > header,.shell > aside
+) {
+  background: var(--tm-clear-glass-uniform) !important;
+  background-image: var(--tm-clear-glass-uniform) !important;
+}
+html.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass :where(
+  .card,.visual-card,.provider-overview,.dashboard-empty,.model-bill,
+  .settings-nav,.settings-detail,.conversion-strip,
+  .all-overview-grid > section,.all-overview-grid > aside,
+  .monitor-status-bar,.dashboard-switcher,.remote-content,.prompt-card,
+  .arena-card,.report-heading,.floating-control-card,.floating-preview-card,
+  .all-summary,.floating-dashboard-item,.status-capsule,.capsule-detail,
+  .arena-source,.arena-commandbar,.arena-table,.arena-detail,
+  .prompt-categories,.quality-panel,.glass-distortion-control,
+  .liquid-appearance-panel,.liquid-glass-quick-control,.monochrome-note
+) {
+  background: var(--tm-clear-glass-uniform) !important;
+  background-image: var(--tm-clear-glass-uniform) !important;
+}
+
+/* 只给经过 GPU 去嵌套审计的真实折射面恢复光学高光，防止透明框残留。 */
+html.liquid-tone-clear .theme-liquid-glass [data-liquid-optical-surface="true"]::before,
+html.liquid-tone-clear .theme-liquid-glass [data-liquid-optical-surface="true"]::after {
+  display: block !important;
+}
+html.liquid-tone-clear .theme-liquid-glass [data-liquid-optical-surface="true"]::before { opacity: .28 !important; }
+html.liquid-tone-clear .theme-liquid-glass [data-liquid-optical-surface="true"]::after { opacity: .16 !important; }
+html.liquid-tone-clear .theme-liquid-glass [data-liquid-nested-suppressed="true"]::before,
+html.liquid-tone-clear .theme-liquid-glass [data-liquid-nested-suppressed="true"]::after { display: none !important; }
+html.liquid-tone-clear .theme-liquid-glass [data-liquid-nested-suppressed="true"] {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* AI 控制中心外层只负责布局，真实玻璃由内部独立卡片承担。 */
+html.liquid-tone-clear .theme-liquid-glass .command-center,
+html.liquid-tone-clear .theme-liquid-glass .command-content,
+html.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass .command-center,
+html.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass .command-content {
+  border-color: transparent !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html.liquid-tone-clear .theme-liquid-glass :where(.glass-card,.command-status) {
+  border-color: var(--tm-clear-glass-edge) !important;
+  background: var(--tm-clear-glass-uniform) !important;
+  background-image: var(--tm-clear-glass-uniform) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: var(--tm-clear-glass-shadow) !important;
+}
+html.liquid-tone-clear:not(.glass-webgl-active) .theme-liquid-glass :where(
+  .app-titlebar,.content > header,.shell > aside,.card,.visual-card,.settings-nav,.settings-detail,
+  .provider-overview,.monitor-status-bar,.dashboard-switcher,.prompt-card,.arena-card
+) {
+  backdrop-filter: blur(1.75rem) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(1.75rem) saturate(145%) !important;
+}
+
+/* 白色玻璃上的文字采用更深的三级灰，避免壁纸高光吞掉辅助信息。 */
+html.liquid-tone-clear .theme-liquid-glass :where(
+  h1,h2,h3,h4,strong,b,dd,th,.section-title,.chart-title,.monitor-status-brand
+) { color: var(--tm-ink) !important; text-shadow: none !important; }
+html.liquid-tone-clear .theme-liquid-glass :where(
+  p,small,label,dt,caption,.hint,.muted,.subtitle,.eyebrow,
+  .dashboard-context-heading > span,.section-title span,.chart-subtitle,
+  .floating-focus-copy em,.floating-dashboard-footer time
+) { color: var(--tm-muted) !important; opacity: 1 !important; text-shadow: none !important; }
+html.liquid-tone-clear .theme-liquid-glass :where(p,small,label,dt,dd,caption,em,time) { opacity: 1 !important; }
+html.liquid-tone-clear .theme-liquid-glass.shell > aside nav button {
+  color: var(--tm-ink) !important;
+}
+html.liquid-tone-clear .theme-liquid-glass.shell > aside nav button :where(span,small) {
+  color: inherit !important;
+  opacity: 1 !important;
+}
+html.liquid-tone-clear .theme-liquid-glass :where(input,select,textarea)::placeholder {
+  color: var(--tm-tertiary) !important;
+  opacity: 1;
+}
+
+/* 图表主色同时控制按钮、选择态、开关、焦点环和液态环境光。 */
+html.liquid-tone-clear .theme-liquid-glass :where(
+  .prompt-primary,.primary-action,.liquid-background-actions .primary,
+  .command-actions .primary,.sync,.customize-trigger.active
+) {
+  border-color: var(--tm-chart-1) !important;
+  background: var(--tm-chart-1) !important;
+  background-image: none !important;
+  color: var(--tm-on-accent) !important;
+}
+html.liquid-tone-clear .theme-liquid-glass :where(
+  .prompt-primary,.primary-action,.liquid-background-actions .primary,
+  .command-actions .primary,.sync,.customize-trigger.active
+) :where(span,b,strong,small,svg) { color: inherit !important; }
+html.liquid-tone-clear .theme-liquid-glass :where(
+  .switch-row input[role="switch"]:checked,input[type="checkbox"]:not([role="switch"]):checked,
+  .liquid-glass-quick-control.active .liquid-glass-state > i
+) {
+  border-color: var(--tm-chart-1) !important;
+  background: var(--tm-chart-1) !important;
+}
+html.liquid-tone-clear .theme-liquid-glass input[type="checkbox"],
+html.liquid-tone-clear .theme-liquid-glass input[type="radio"] {
+  accent-color: var(--tm-chart-1) !important;
+}
+html.liquid-tone-clear .theme-liquid-glass input[type="checkbox"]:not([role="switch"]):checked,
+html.liquid-tone-clear .theme-liquid-glass input[type="radio"]:checked {
+  border-color: var(--tm-chart-1) !important;
+  background: var(--tm-chart-1) !important;
+  background-color: var(--tm-chart-1) !important;
+  color: var(--tm-on-accent) !important;
+}
+html.liquid-tone-clear .theme-liquid-glass :where(
+  .command-kicker,.prompt-hero > div > span,.prompt-editor header > span,
+  .liquid-glass-quick-copy small
+) { color: var(--tm-chart-1) !important; }
+html.liquid-tone-clear .theme-liquid-glass :where(
+  button,input,select,textarea,[tabindex]
+):focus-visible {
+  outline-color: color-mix(in srgb,var(--tm-chart-1) 58%,transparent) !important;
+}
+
+html.liquid-tone-clear .theme-liquid-glass.shell > aside nav button.active,
+html.liquid-tone-clear .theme-liquid-glass .dashboard-switcher > button.active,
+html.liquid-tone-clear .theme-liquid-glass .dashboard-switcher .dashboard-tab.active,
+html.liquid-tone-clear .theme-liquid-glass :where(.segmented button.active,.token-range button.active,.floating-chart-tabs button.active) {
+  border-color: color-mix(in srgb,var(--tm-chart-1) 34%,var(--tm-clear-glass-edge)) !important;
+  background: linear-gradient(145deg,rgba(255,255,255,.38),color-mix(in srgb,var(--tm-chart-1) 15%,rgba(255,255,255,.08))) !important;
+  background-image: linear-gradient(145deg,rgba(255,255,255,.38),color-mix(in srgb,var(--tm-chart-1) 15%,rgba(255,255,255,.08))) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.72),0 .35rem 1rem color-mix(in srgb,var(--tm-chart-1) 10%,transparent) !important;
+}
+html.liquid-tone-clear .theme-liquid-glass.shell > aside nav button.active::after {
+  background: var(--tm-chart-1) !important;
+  box-shadow: 0 0 .7rem color-mix(in srgb,var(--tm-chart-1) 38%,transparent) !important;
+}
+
+html.liquid-tone-clear .theme-liquid-glass :where(
+  .mini-progress-ring:not(.tone-critical),.floating-line-wrap,.cache-ring,.cost-ring
+) { color: var(--tm-chart-ring) !important; }
+html.liquid-tone-clear .theme-liquid-glass :where(
+  .floating-dashboard-bar > i,.floating-chart-bars i,.capsule-chart i,.mini-collapsed-bars i,.metric-bar > i
+) { background: var(--tm-chart-1) !important; }
+
+/* 代理/CC Switch 的红绿是语义状态色，不能被图表主题覆盖。 */
+html.liquid-tone-clear .theme-liquid-glass :where(.is-live,.online,.tone-critical,.warning,.critical) {
+  --tm-semantic-status-preserved: 1;
+}
+
+/* 悬浮窗与主界面共享透明度、文字和图表主色。 */
+html.floating-window.liquid-tone-clear[data-native-glass="active"] .theme-liquid-glass.floating-dashboard-shell {
+  clip-path: inset(0 round 20px);
+  border: 1px solid var(--tm-clear-glass-edge) !important;
+  border-radius: 20px !important;
+  background: var(--tm-clear-glass-uniform) !important;
+  background-image: var(--tm-clear-glass-uniform) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: var(--tm-clear-glass-shadow) !important;
+}
+html.floating-window.liquid-tone-clear[data-native-glass="active"] .theme-liquid-glass.floating-dashboard-shell :where(
+  .floating-focus-summary,.floating-focus-chart,.floating-focus-selector,
+  .floating-focus-stats > span,.floating-chart-tabs,.floating-chart-empty
+) {
+  border-color: var(--tm-clear-glass-edge) !important;
+  background: var(--tm-clear-glass-uniform) !important;
+  background-image: var(--tm-clear-glass-uniform) !important;
+  color: var(--tm-ink) !important;
+}
+
+/* 侧栏内部与深色模式一致，维持同一层轻薄玻璃，不再叠加白色实体面板。 */
+html.liquid-tone-clear .theme-liquid-glass.shell > aside :where(
+  .brand,nav,.privacy,.sidebar-material-footer
+),
+html.liquid-tone-clear[data-glass-background="custom"] .theme-liquid-glass.shell > aside :where(
+  .brand,nav,.privacy,.sidebar-material-footer
+),
+html.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass.shell > aside :where(
+  .brand,nav,.privacy,.sidebar-material-footer
+) {
+  border-color: var(--tm-clear-glass-edge) !important;
+  background: var(--tm-clear-glass-uniform) !important;
+  background-image: var(--tm-clear-glass-uniform) !important;
+  box-shadow: var(--tm-clear-glass-shadow) !important;
+}
+
+/* 最终标题栏覆盖必须位于自定义壁纸规则之后，确保图片与视频背景也连续。 */
+html.liquid-tone-clear .theme-liquid-glass .app-titlebar,
+html.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass .app-titlebar {
+  border: 1px solid var(--tm-clear-glass-edge) !important;
+  border-radius: 1rem !important;
+  background: var(--tm-clear-glass-uniform) !important;
+  background-image: var(--tm-clear-glass-uniform) !important;
+  box-shadow: var(--tm-clear-glass-shadow) !important;
+}
+html.liquid-tone-clear .theme-liquid-glass .app-titlebar[data-liquid-optical-surface="true"]::before { opacity: .12 !important; }
+html.liquid-tone-clear .theme-liquid-glass .app-titlebar[data-liquid-optical-surface="true"]::after { opacity: .06 !important; }
+html.liquid-tone-clear.glass-webgl-active .theme-liquid-glass .app-titlebar[data-liquid-optical-surface="true"],
+html.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass .app-titlebar[data-liquid-optical-surface="true"] {
+  /* 透明白模式同样让整条圆弧折射透出，不再被高不透明白条遮盖。 */
+  background:
+    linear-gradient(110deg, rgba(255,255,255,.22), rgba(255,255,255,.045) 52%, rgba(255,255,255,.15)) !important;
+  background-image:
+    linear-gradient(110deg, rgba(255,255,255,.22), rgba(255,255,255,.045) 52%, rgba(255,255,255,.15)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.68),
+    inset 0 -1px 0 rgba(255,255,255,.16),
+    0 .35rem .75rem rgba(45,52,66,.06) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.liquid-tone-clear .theme-liquid-glass [data-liquid-optical-surface="true"]::before,
+  html.liquid-tone-clear .theme-liquid-glass [data-liquid-optical-surface="true"]::after { transition: none !important; }
+}

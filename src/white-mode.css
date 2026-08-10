@@ -1,0 +1,529 @@
+/*
+ * Token Manager 纯白视觉层
+ *
+ * “纯白模式”强调稳定、可读和一致性：不使用透明玻璃、背景折射或深色大卡片。
+ * 该文件最后加载，用于收敛早期主题样式中的局部深色和半透明残留。
+ */
+
+html.liquid-tone-clear,
+html.liquid-tone-clear body,
+html.liquid-tone-clear #app {
+  background: #fff !important;
+  color: #1d1d1f !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass.shell,
+.liquid-tone-clear .theme-liquid-glass.floating-dashboard-shell {
+  background: #fff !important;
+  background-image: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass::before,
+.liquid-tone-clear .theme-liquid-glass::after,
+.liquid-tone-clear .theme-liquid-glass :where(.card,.visual-card,.command-center,.settings-nav,.settings-detail,.monitor-status-bar,.dashboard-switcher,.provider-overview,.floating-focus)::before,
+.liquid-tone-clear .theme-liquid-glass :where(.card,.visual-card,.command-center,.settings-nav,.settings-detail,.monitor-status-bar,.dashboard-switcher,.provider-overview,.floating-focus)::after {
+  display: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass.shell > aside,
+.liquid-tone-clear .theme-liquid-glass .content,
+.liquid-tone-clear .theme-liquid-glass .content > header {
+  background: #fff !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass.shell > aside {
+  border-right: 1px solid #e5e5ea !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass.shell > aside :where(.brand,nav,.privacy) {
+  border-color: #e5e5ea !important;
+  background: #fff !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass.shell > aside nav button {
+  border-color: transparent !important;
+  background: #fff !important;
+  color: #5c5c62 !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass.shell > aside nav button:hover,
+.liquid-tone-clear .theme-liquid-glass.shell > aside nav button.active {
+  border-color: #e5e5ea !important;
+  background: #f2f2f7 !important;
+  background-image: none !important;
+  color: #1d1d1f !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass.shell > aside nav button.active::after {
+  background: #1d1d1f !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass :where(
+  .card,.visual-card,.provider-overview,.dashboard-empty,.model-bill,
+  .settings-nav,.settings-detail,.command-center,.retention-panel,
+  .conversion-strip,.all-overview-grid > section,.all-overview-grid > aside,
+  .monitor-status-bar,.dashboard-switcher,.remote-content,.prompt-card,
+  .arena-card,.report-heading,.floating-control-card,.floating-preview-card,
+  .all-summary,.deepseek-metrics .balance-primary,.model-kpis .token-primary
+) {
+  border-color: #e5e5ea !important;
+  background: #fff !important;
+  background-image: none !important;
+  color: #1d1d1f !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass :where(
+  input:not([type="checkbox"]):not([type="radio"]),select,textarea,code,
+  .segmented,.token-range,.floating-chart-tabs,.token-chart-summary > span,
+  .prompt-stats > *,.model-stat-grid > article,.monitor-signal,.connection-state,
+  .cc-switch-state,.floating-focus-stats > span,.floating-chart-empty
+) {
+  border-color: #e5e5ea !important;
+  background: #f5f5f7 !important;
+  background-image: none !important;
+  color: #1d1d1f !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass :where(
+  .segmented button.active,.token-range button.active,.dashboard-tab.active,
+  .floating-chart-tabs button.active,.floating-control-card.active,
+  .monitor-launch.running,.monitor-launch.receiving,.monitor-status-action
+) {
+  border-color: #d1d1d6 !important;
+  background: #fff !important;
+  background-image: none !important;
+  color: #1d1d1f !important;
+  box-shadow: 0 1px 3px rgba(29,29,31,.06) !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass :where(.prompt-primary,.primary-action,.liquid-background-actions .primary,.command-actions .primary) {
+  border-color: #0066cc !important;
+  background: #0066cc !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass :where(.command-kicker,.prompt-hero > div > span,.prompt-editor header > span) {
+  color: #0066cc !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass :where(.particle-field) { display: none !important; }
+
+.liquid-tone-clear .theme-liquid-glass :where(.liquid-glass-quick-control,.monochrome-note,.liquid-appearance-panel.active) {
+  border-color: #e5e5ea !important;
+  background: #fff !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass .liquid-glass-quick-control::after { display: none !important; }
+.liquid-tone-clear .theme-liquid-glass .liquid-glass-quick-copy small { color: #0066cc !important; }
+.liquid-tone-clear .theme-liquid-glass .liquid-glass-quick-control.active,
+.liquid-tone-clear .theme-liquid-glass .motion-settings > .glass-quality-control {
+  border-color: #e5e5ea !important;
+  background: #fff !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass .glass-quality-control button {
+  border-color: #e5e5ea !important;
+  background: #f5f5f7 !important;
+  color: #1d1d1f !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass .glass-quality-control button.active {
+  border-color: #d1d1d6 !important;
+  background: #fff !important;
+  box-shadow: 0 1px 3px rgba(29,29,31,.06) !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass :where(h1,h2,h3,h4,strong,b,dd,th,.section-title,.chart-title) {
+  color: #1d1d1f !important;
+  text-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass :where(p,small,label,dt,caption,.hint,.muted,.subtitle,.eyebrow) {
+  color: #5c5c62 !important;
+  text-shadow: none !important;
+}
+
+/* 主仪表盘图表统一：白色卡片、浅灰网格、无装饰性玻璃层。 */
+.liquid-tone-clear .theme-liquid-glass .analytics-toolbar {
+  padding-bottom: .875rem;
+  border-bottom: 1px solid #e5e5ea;
+}
+
+.liquid-tone-clear .theme-liquid-glass .analytics-suite .visual-card {
+  border: 1px solid #e5e5ea !important;
+  border-radius: 16px !important;
+  background: #fff !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass .analytics-suite .visual-card:hover {
+  transform: translateY(-1px) !important;
+  border-color: #d1d1d6 !important;
+  background: #fff !important;
+  box-shadow: 0 8px 24px rgba(29,29,31,.07) !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass .analytics-suite .visual-card::before {
+  display: none !important;
+}
+
+.analytics-suite .visual-card.empty .echart { height: 10rem !important; }
+.analytics-suite .visual-card.empty { min-height: 13.5rem !important; }
+
+.liquid-tone-clear .theme-liquid-glass :where(.bar-tooltip,.floating-dashboard-bar > em,.floating-chart-tooltip) {
+  border: 1px solid #e5e5ea !important;
+  background: #fff !important;
+  color: #1d1d1f !important;
+  box-shadow: 0 10px 28px rgba(29,29,31,.12) !important;
+}
+
+/* 聚焦式悬浮窗：一次只展示一个监控对象，避免列表、胶囊和模块卡片互相争抢空间。 */
+.floating-focus {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  flex: 1 1 auto;
+  align-content: start;
+  gap: .625rem;
+  min-height: 0;
+  padding: .0625rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.floating-focus::-webkit-scrollbar { width: .3125rem; }
+.floating-focus::-webkit-scrollbar-thumb { border-radius: 99px; background: var(--tm-line); }
+
+.floating-focus-summary {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0,1fr) 3.25rem;
+  align-items: center;
+  gap: .6875rem;
+  min-height: 4.5rem;
+  padding: .75rem;
+  border: 1px solid var(--tm-line);
+  border-radius: .9375rem;
+  background: var(--tm-glass);
+  color: var(--tm-ink);
+}
+
+.floating-focus-logo,
+.floating-focus-summary .provider-mark {
+  width: 2.625rem !important;
+  height: 2.625rem !important;
+  border-radius: .75rem !important;
+  object-fit: contain;
+}
+
+.floating-focus-logo.codex { padding: .1875rem; background: #fff; }
+.floating-focus-copy { display: grid; min-width: 0; gap: .125rem; }
+.floating-focus-copy small { color: var(--tm-muted); font-size: .5rem; }
+.floating-focus-copy b { overflow: hidden; color: var(--tm-ink); font-size: .875rem; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.floating-focus-copy em { overflow: hidden; color: var(--tm-muted); font-size: .4375rem; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.floating-focus .mini-progress-ring { position: relative !important; inset: auto !important; justify-self: end; width: 3rem !important; height: 3rem !important; transform: none !important; }
+
+.floating-focus-selector {
+  display: grid;
+  grid-template-columns: auto minmax(0,1fr);
+  align-items: center;
+  gap: .75rem;
+  padding: .625rem .75rem;
+  border: 1px solid var(--tm-line);
+  border-radius: .75rem;
+  background: var(--tm-surface);
+  color: var(--tm-muted);
+  font-size: .5rem;
+}
+
+.floating-focus-selector select {
+  min-width: 0;
+  min-height: 1.875rem;
+  padding: .375rem .625rem;
+  border: 1px solid var(--tm-line);
+  border-radius: .625rem;
+  background: var(--tm-bg);
+  color: var(--tm-ink);
+  font: 600 .5rem/1 var(--apple-font);
+}
+
+.floating-focus-stats { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .4375rem; }
+.floating-focus-stats > span { display: grid; min-width: 0; gap: .25rem; padding: .625rem; border: 1px solid var(--tm-line); border-radius: .75rem; background: var(--tm-surface); }
+.floating-focus-stats small { color: var(--tm-muted); font-size: .4375rem; }
+.floating-focus-stats b { overflow: hidden; color: var(--tm-ink); font-size: .6875rem; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+
+.floating-focus-chart {
+  min-height: 11rem;
+  padding: .75rem;
+  border: 1px solid var(--tm-line);
+  border-radius: .9375rem;
+  background: var(--tm-glass);
+}
+
+.floating-focus-chart .floating-dashboard-bars { height: 7.5rem; }
+.floating-focus-chart .floating-chart-empty { min-height: 7.5rem; }
+.floating-dashboard-footer i.ready { opacity: .72; background: var(--tm-muted); }
+
+.floating-dashboard-shell.collapsed .floating-focus { overflow: hidden; }
+.floating-dashboard-shell.collapsed .floating-focus-summary { min-height: 4rem; padding: .625rem .75rem; }
+.floating-dashboard-shell.collapsed .floating-focus-copy em { display: none; }
+.floating-dashboard-shell.collapsed .floating-focus { flex: 0 0 auto; }
+.floating-dashboard-shell.collapsed .floating-dashboard-header {
+  display: flex !important;
+  min-height: 2.5rem !important;
+  margin: 0 0 .4375rem !important;
+  padding: .0625rem .0625rem .375rem !important;
+  cursor: move;
+}
+.floating-dashboard-shell.collapsed .floating-brand small { display: none; }
+.floating-dashboard-shell.collapsed .floating-dashboard-header nav button:first-child { display: none; }
+
+/* 纯白悬浮窗不再透出桌面，也不继承液态材质的伪元素和模糊。 */
+.floating-window.liquid-tone-clear,
+.floating-window.liquid-tone-clear body,
+.floating-window.liquid-tone-clear #app {
+  overflow: hidden !important;
+  border: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.floating-window.liquid-tone-clear .theme-liquid-glass.floating-dashboard-shell {
+  clip-path: inset(0 round 20px);
+  border: 0 !important;
+  border-radius: 20px !important;
+  background: #fff !important;
+  color: #1d1d1f !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: inset 0 0 0 1px #e5e5ea !important;
+}
+
+.floating-window.liquid-tone-clear .theme-liquid-glass.floating-dashboard-shell::before,
+.floating-window.liquid-tone-clear .theme-liquid-glass.floating-dashboard-shell::after { display: none !important; }
+
+.floating-window.liquid-tone-clear .theme-liquid-glass.floating-dashboard-shell :where(
+  .floating-focus-summary,.floating-focus-chart
+) {
+  border-color: #e5e5ea !important;
+  background: #fff !important;
+  background-image: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.floating-window.liquid-tone-clear .theme-liquid-glass.floating-dashboard-shell :where(
+  .floating-focus-selector,.floating-focus-stats > span,.floating-chart-tabs,.floating-chart-empty
+) {
+  border-color: #e5e5ea !important;
+  background: #f5f5f7 !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.floating-window.liquid-tone-clear .theme-liquid-glass.floating-dashboard-shell .floating-dashboard-bars {
+  background: linear-gradient(to bottom,#f7f7f9,transparent 72%) !important;
+}
+
+/* 纯白是液态玻璃的无染色形态：控件只使用白、浅灰和系统蓝，不再出现大块黑色状态。 */
+.liquid-tone-clear .theme-liquid-glass :where(
+  .switch-row input[role="switch"],.liquid-glass-state > i
+) {
+  border: 1px solid #d1d1d6 !important;
+  background: #e9e9ee !important;
+  box-shadow: inset 0 0 0 1px rgba(29,29,31,.025) !important;
+}
+.liquid-tone-clear .theme-liquid-glass :where(
+  .switch-row input[role="switch"]:checked,.liquid-glass-quick-control.active .liquid-glass-state > i
+) {
+  border-color: #0066cc !important;
+  background: #0066cc !important;
+}
+.liquid-tone-clear .theme-liquid-glass input[type="checkbox"]:not([role="switch"]):checked {
+  border-color: #0066cc !important;
+  background: #0066cc !important;
+  color: #fff !important;
+}
+.liquid-tone-clear .theme-liquid-glass :where(
+  .monitor-launch.running,.shell .content .monitor-launch.running,
+  .connection-state.is-live .status-title em,.cc-switch-state.is-live .status-title em,
+  .cc-switch-state.is-live .connection-glyph,.floating-shell .proxyLive,
+  .floating-sync .status-inline.is-live .connection-glyph,.preview-status-row span.active,
+  .prompt-card footer .copy
+) {
+  border-color: #c7dcf4 !important;
+  background: #edf5ff !important;
+  color: #005bb5 !important;
+  box-shadow: none !important;
+}
+
+@media (max-height: 390px) {
+  .floating-focus-stats { grid-template-columns: repeat(3,minmax(5rem,1fr)); overflow-x: auto; }
+  .floating-focus-chart { min-height: 9rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-focus *,
+  .analytics-suite .visual-card { animation: none !important; transition: none !important; }
+}
+
+/* v0.8.1：纯白不是“关闭玻璃”，而是无染色的高亮折射材质。 */
+.liquid-tone-clear .theme-liquid-glass.shell,
+.liquid-tone-clear .theme-liquid-glass .content {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass.shell > aside,
+.liquid-tone-clear .theme-liquid-glass .content > header {
+  border-color: rgba(29,29,31,.09) !important;
+  background: linear-gradient(150deg,rgba(255,255,255,.76),rgba(255,255,255,.38)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.94),0 6px 12px rgba(29,29,31,.06) !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass.shell > aside :where(.brand,nav,.privacy) {
+  border-color: rgba(29,29,31,.09) !important;
+  background: linear-gradient(145deg,rgba(255,255,255,.74),rgba(255,255,255,.34)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9) !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass :where(
+  .card,.visual-card,.provider-overview,.dashboard-empty,.model-bill,
+  .settings-nav,.settings-detail,.command-center,.retention-panel,
+  .conversion-strip,.all-overview-grid > section,.all-overview-grid > aside,
+  .monitor-status-bar,.dashboard-switcher,.remote-content,.prompt-card,
+  .arena-card,.report-heading,.floating-control-card,.floating-preview-card,
+  .all-summary,.deepseek-metrics .balance-primary,.model-kpis .token-primary
+) {
+  border-color: rgba(29,29,31,.09) !important;
+  background: linear-gradient(145deg,rgba(255,255,255,.69),rgba(255,255,255,.38)) !important;
+  color: #1d1d1f !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.92),0 4px 8px rgba(29,29,31,.055) !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass .analytics-suite .visual-card,
+.liquid-tone-clear .theme-liquid-glass :where(.liquid-glass-quick-control,.monochrome-note,.liquid-appearance-panel.active) {
+  border-color: rgba(29,29,31,.09) !important;
+  background: linear-gradient(145deg,rgba(255,255,255,.68),rgba(255,255,255,.36)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.94),0 4px 8px rgba(29,29,31,.05) !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass .analytics-suite .visual-card:hover {
+  border-color: rgba(29,29,31,.16) !important;
+  background: linear-gradient(145deg,rgba(255,255,255,.78),rgba(255,255,255,.45)) !important;
+  box-shadow: inset 0 1px 0 #fff,0 6px 12px rgba(29,29,31,.08) !important;
+}
+
+.liquid-tone-clear .theme-liquid-glass :where(.particle-field) { display: block !important; }
+
+.floating-window[data-native-glass="active"].liquid-tone-clear .theme-liquid-glass.floating-dashboard-shell {
+  clip-path: inset(0 round 20px);
+  border: 1px solid rgba(255,255,255,.78) !important;
+  border-radius: 20px !important;
+  background: linear-gradient(145deg,rgba(255,255,255,.53),rgba(255,255,255,.17)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.98),inset 0 0 0 1px rgba(29,29,31,.045) !important;
+}
+
+.floating-window[data-native-glass="active"].liquid-tone-clear .theme-liquid-glass.floating-dashboard-shell :where(
+  .floating-focus-summary,.floating-focus-chart,.floating-focus-selector,
+  .floating-focus-stats > span,.floating-chart-tabs,.floating-chart-empty
+) {
+  border-color: rgba(29,29,31,.09) !important;
+  background: linear-gradient(145deg,rgba(255,255,255,.62),rgba(255,255,255,.3)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9) !important;
+}
+
+.mini-progress-ring:not(.tone-critical) { color: var(--tm-chart-ring,var(--tm-ink)) !important; }
+.floating-dashboard-bar > i,
+.floating-chart-bars i,
+.capsule-chart i { background: var(--tm-chart-1,var(--tm-ink)) !important; }
+
+/* 内置/自定义壁纸会触发更高优先级的数据背景规则，这里明确锁定纯白玻璃的亮度。 */
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass.shell > aside,
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass .content > header,
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass :where(.arena-page-heading,.dashboard-context-heading) {
+  border-color: rgba(29,29,31,.1) !important;
+  background: linear-gradient(150deg,rgba(255,255,255,.9),rgba(255,255,255,.74)) !important;
+  color: #1d1d1f !important;
+  box-shadow: inset 0 1px 0 #fff,0 6px 12px rgba(29,29,31,.065) !important;
+}
+
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass.shell > aside :where(.brand,nav,.privacy),
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass :where(
+  .card,.visual-card,.provider-overview,.dashboard-empty,.model-bill,
+  .settings-nav,.settings-detail,.command-center,.retention-panel,
+  .conversion-strip,.all-overview-grid > section,.all-overview-grid > aside,
+  .monitor-status-bar,.dashboard-switcher,.remote-content,.prompt-card,
+  .arena-card,.report-heading,.floating-control-card,.floating-preview-card,
+  .all-summary,.deepseek-metrics .balance-primary,.model-kpis .token-primary
+) {
+  border-color: rgba(29,29,31,.1) !important;
+  background: linear-gradient(145deg,rgba(255,255,255,.88),rgba(255,255,255,.7)) !important;
+  background-image: linear-gradient(145deg,rgba(255,255,255,.88),rgba(255,255,255,.7)) !important;
+  color: #1d1d1f !important;
+  box-shadow: inset 0 1px 0 #fff,0 4px 8px rgba(29,29,31,.055) !important;
+}
+
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass .analytics-suite .visual-card {
+  background: linear-gradient(145deg,rgba(255,255,255,.86),rgba(255,255,255,.68)) !important;
+  background-image: linear-gradient(145deg,rgba(255,255,255,.86),rgba(255,255,255,.68)) !important;
+}
+
+/* v0.8.2：纯白玻璃略微提高透射率，让壁纸轮廓参与折射，同时维持深色正文对比度。 */
+.liquid-tone-clear .theme-liquid-glass.shell > aside,
+.liquid-tone-clear .theme-liquid-glass .content > header {
+  background: linear-gradient(150deg,rgba(255,255,255,.7),rgba(255,255,255,.3)) !important;
+}
+.liquid-tone-clear .theme-liquid-glass.shell > aside :where(.brand,nav,.privacy,.sidebar-material-footer) {
+  background: linear-gradient(145deg,rgba(255,255,255,.66),rgba(255,255,255,.25)) !important;
+}
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass.shell > aside,
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass .content > header,
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass :where(.arena-page-heading,.dashboard-context-heading) {
+  background: linear-gradient(150deg,rgba(255,255,255,.84),rgba(255,255,255,.6)) !important;
+}
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass.shell > aside :where(.brand,nav,.privacy,.sidebar-material-footer),
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass :where(
+  .card,.visual-card,.provider-overview,.dashboard-empty,.model-bill,
+  .settings-nav,.settings-detail,.command-center,.retention-panel,
+  .conversion-strip,.all-overview-grid > section,.all-overview-grid > aside,
+  .monitor-status-bar,.dashboard-switcher,.remote-content,.prompt-card,
+  .arena-card,.report-heading,.floating-control-card,.floating-preview-card,
+  .all-summary,.deepseek-metrics .balance-primary,.model-kpis .token-primary,
+  .glass-distortion-control
+) {
+  background: linear-gradient(145deg,rgba(255,255,255,.8),rgba(255,255,255,.56)) !important;
+  background-image: linear-gradient(145deg,rgba(255,255,255,.8),rgba(255,255,255,.56)) !important;
+}
+.liquid-tone-clear.glass-webgl-active[data-glass-background="custom"] .theme-liquid-glass .analytics-suite .visual-card {
+  background: linear-gradient(145deg,rgba(255,255,255,.78),rgba(255,255,255,.54)) !important;
+  background-image: linear-gradient(145deg,rgba(255,255,255,.78),rgba(255,255,255,.54)) !important;
+}
+.floating-window[data-native-glass="active"].liquid-tone-clear .theme-liquid-glass.floating-dashboard-shell {
+  background: linear-gradient(145deg,rgba(255,255,255,.47),rgba(255,255,255,.13)) !important;
+}

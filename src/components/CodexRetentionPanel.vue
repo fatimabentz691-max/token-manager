@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { buildCodexInsights, classifyTurn, exportCodexExcel, loadLocal, priceCatalog, saveLocal, type CodexTurn, type ResetCoupon } from '../features/retention'
+import { useThemePreferences } from '../features/themePreferences'
 
 const props = defineProps<{ points: CodexTurn[]; sevenDayUsed: number; sevenDayBudget: number; remaining5h: number; remaining7d: number; resetText: string }>()
 const labels = ref<Record<string, string>>(loadLocal('token-manager-codex-project-labels', {}))
+const { theme } = useThemePreferences()
 const monthlyBudget = ref(loadLocal('token-manager-monthly-budget', 200))
 const coupons = ref<ResetCoupon[]>(loadLocal('token-manager-reset-coupons', []))
 const couponQuantity = ref(1)
@@ -17,7 +19,10 @@ const projects = computed(() => ['全部项目', ...new Set(Object.values(labels
 const filteredPoints = computed(() => selectedProject.value === '全部项目' ? periodPoints.value : periodPoints.value.filter(point => labels.value[turnKey(point)] === selectedProject.value))
 const insights = computed(() => buildCodexInsights(filteredPoints.value, props.sevenDayUsed, props.sevenDayBudget, monthlyBudget.value))
 const highSessions = computed(() => [...filteredPoints.value].sort((a,b) => b.tokens-a.tokens).slice(0,8))
-const categoryGradient = computed(() => { const [a,b] = insights.value.categories; return `conic-gradient(#111 0 ${a.percent}%,#86868b ${a.percent}% ${a.percent+b.percent}%,#d1d1d6 ${a.percent+b.percent}% 100%)` })
+const categoryGradient = computed(() => {
+  const [a,b] = insights.value.categories
+  return `conic-gradient(${theme.value.accent} 0 ${a.percent}%,${theme.value.glow} ${a.percent}% ${a.percent+b.percent}%,color-mix(in srgb,${theme.value.ink} 34%,${theme.value.background}) ${a.percent+b.percent}% 100%)`
+})
 const projectSummary = computed(() => ({ tokens: filteredPoints.value.reduce((sum,point)=>sum+point.tokens,0), calls: filteredPoints.value.length, hours: filteredPoints.value.reduce((sum,point)=>sum+point.tokens,0)/Math.max(1,insights.value.observedPerHour) }))
 const modelStats = computed(() => { const map=new Map<string,{model:string,tokens:number,calls:number,temperatures:number[]}>();for(const point of filteredPoints.value){const row=map.get(point.model)||{model:point.model,tokens:0,calls:0,temperatures:[]};row.tokens+=point.tokens;row.calls++;if(typeof point.temperature==='number')row.temperatures.push(point.temperature);map.set(point.model,row)}return[...map.values()].map(row=>({...row,average:Math.round(row.tokens/row.calls),temperature:row.temperatures.length?(row.temperatures.reduce((a,b)=>a+b,0)/row.temperatures.length).toFixed(2):'日志未记录'})).sort((a,b)=>a.average-b.average) })
 const couponRemaining = computed(() => coupons.value.reduce((sum,item)=>sum+Math.max(0,item.quantity-item.used),0))
@@ -64,4 +69,135 @@ onMounted(()=>{
 
 <style scoped>
 .codex-retention{display:grid;gap:14px;margin:18px 0}.local-disclaimer{display:flex;gap:12px;padding:13px 16px;border-radius:12px;background:#f2f2f7;color:#525257;font-size:11px;line-height:1.55}.local-disclaimer b{flex:0 0 auto;color:#1d1d1f}.retention-toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:18px}.retention-toolbar h2{margin:0 0 5px;font-size:18px}.retention-toolbar p,.panel-heading p{margin:0;color:#737378;font-size:10px}.retention-toolbar>div:last-child{display:flex;gap:7px}.retention-toolbar select,.retention-toolbar button{height:34px;padding:0 11px;border:1px solid #dedee2;border-radius:10px;background:#fff;color:#1d1d1f;font:inherit;font-size:10px}.retention-toolbar button.active{border-color:#111;background:#111;color:#fff}.conversion-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));overflow:hidden;border:1px solid #e5e5e8;border-radius:16px;background:#fff}.conversion-strip article{padding:18px}.conversion-strip article+article{border-left:1px solid #ededf0}.conversion-strip span,.conversion-strip small{display:block;color:#737378;font-size:10px}.conversion-strip strong{display:block;margin:8px 0;font-size:19px;letter-spacing:-.02em}.retention-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px}.retention-panel{padding:20px;border:1px solid #e5e5e8;border-radius:16px;background:#fff}.panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.panel-heading h3{margin:0 0 5px;font-size:14px}.panel-heading>span{color:#737378;font-size:10px}.panel-heading button{padding:8px 10px}.category-body{display:flex;align-items:center;gap:24px;margin-top:18px}.category-ring{display:grid;place-items:center;width:128px;height:128px;flex:0 0 auto;border-radius:50%}.category-ring>span{display:grid;place-items:center;width:82px;height:82px;border-radius:50%;background:#fff}.category-ring b,.category-ring small{display:block}.category-ring b{font-size:20px}.category-ring small{color:#737378;font-size:9px}.category-list{display:grid;gap:12px;flex:1}.category-list>div{display:grid;grid-template-columns:8px 1fr auto;align-items:center;gap:9px}.category-list i{width:8px;height:8px;border-radius:3px;background:#111}.category-list>div:nth-child(2) i{background:#86868b}.category-list>div:nth-child(3) i{background:#d1d1d6}.category-list b,.category-list small{display:block}.category-list b{font-size:11px}.category-list small{margin-top:2px;color:#737378;font-size:9px}.category-list strong{font-size:12px}.saving-tip,.coupon-warning{margin:17px 0 0;padding:11px 12px;border-radius:10px;background:#f2f2f7;color:#525257;font-size:10px;line-height:1.55}.budget-line{display:flex;align-items:flex-end;justify-content:space-between;margin-top:24px}.budget-line span{color:#737378;font-size:10px}.budget-line strong{font-size:25px}.budget-progress{height:8px;margin:13px 0 7px;overflow:hidden;border-radius:99px;background:#ececf0}.budget-progress i{display:block;height:100%;border-radius:99px;background:#111}.budget-meta{display:flex;justify-content:space-between;color:#737378;font-size:9px}.budget-panel label{display:flex;align-items:center;gap:9px;margin:18px 0 10px;color:#525257;font-size:10px}.budget-panel input{width:90px;padding:8px;border:1px solid #dedee2;border-radius:9px}.budget-panel>small{color:#86868b;font-size:9px;line-height:1.5}.session-table,.coupon-list{display:grid;margin-top:15px}.session-table>div,.coupon-list>div{display:grid;grid-template-columns:minmax(0,1fr) auto 130px;align-items:center;gap:12px;padding:11px 0;border-top:1px solid #ededf0}.session-table span b,.session-table span small,.coupon-list span b,.coupon-list span small{display:block}.session-table span b,.coupon-list span b{font-size:10px}.session-table span small,.coupon-list span small{margin-top:3px;color:#737378;font-size:9px}.session-table em{margin-left:6px;padding:3px 5px;border-radius:6px;background:#ff3b30;color:#fff;font-style:normal}.session-table input{min-width:0;padding:8px;border:1px solid #dedee2;border-radius:9px;font:inherit;font-size:9px}.session-table>div.anomaly>strong{color:#ff3b30}.session-review footer{margin-top:10px;color:#737378;font-size:9px}.coupon-form{display:grid;grid-template-columns:72px 1fr auto;gap:8px;margin-top:17px}.coupon-form label{color:#737378;font-size:9px}.coupon-form input{display:block;width:100%;margin-top:5px;padding:8px;border:1px solid #dedee2;border-radius:9px}.coupon-form button{align-self:end;height:34px}.coupon-list>div{grid-template-columns:minmax(0,1fr) auto auto}.coupon-list button{padding:7px 8px;font-size:9px}.text-danger{background:transparent!important;color:#ff3b30!important}.empty-retention{display:block!important;padding:24px 0!important;text-align:center;color:#86868b;font-size:10px}.model-stat-grid{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.model-stat-grid article{position:relative;min-width:190px;flex:1;padding:14px;border-radius:12px;background:#f7f7f8}.model-stat-grid span,.model-stat-grid small{display:block;color:#737378;font-size:9px}.model-stat-grid strong{display:block;margin:7px 0;font-size:18px}.model-stat-grid em{position:absolute;right:10px;top:10px;padding:3px 6px;border-radius:6px;background:#111;color:#fff;font-size:8px;font-style:normal}@media(max-width:1050px){.conversion-strip{grid-template-columns:repeat(2,1fr)}.conversion-strip article:nth-child(3){border-left:0;border-top:1px solid #ededf0}.conversion-strip article:nth-child(4){border-top:1px solid #ededf0}.retention-grid{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){.budget-progress i{transition:none}}
+</style>
+<style scoped>
+.codex-retention { color: var(--tm-ink); }
+.local-disclaimer,
+.saving-tip,
+.coupon-warning {
+  border: 1px solid var(--tm-line);
+  background: var(--tm-surface);
+  color: var(--tm-muted);
+}
+.local-disclaimer b { color: var(--tm-ink); }
+.retention-toolbar p,
+.panel-heading p,
+.conversion-strip span,
+.conversion-strip small,
+.panel-heading > span,
+.category-ring small,
+.category-list small,
+.budget-line span,
+.budget-meta,
+.budget-panel label,
+.budget-panel > small,
+.session-table span small,
+.coupon-list span small,
+.session-review footer,
+.coupon-form label,
+.model-stat-grid span,
+.model-stat-grid small {
+  color: var(--tm-muted);
+}
+.retention-toolbar select,
+.retention-toolbar button,
+.budget-panel input,
+.session-table input,
+.coupon-form input {
+  border-color: var(--tm-line);
+  background: var(--tm-surface);
+  color: var(--tm-ink);
+}
+.retention-toolbar button.active {
+  border-color: color-mix(in srgb,var(--tm-accent) 48%,var(--tm-line));
+  background: color-mix(in srgb,var(--tm-accent) 18%,var(--tm-bg));
+  color: var(--tm-ink);
+  box-shadow: 0 8px 24px color-mix(in srgb,var(--tm-glow) 12%,transparent);
+}
+.conversion-strip,
+.retention-panel {
+  border-color: var(--tm-line);
+  background: var(--tm-glass);
+  box-shadow: inset 0 1px 0 color-mix(in srgb,var(--tm-ink) 7%,transparent), 0 12px 34px color-mix(in srgb,var(--tm-glow) 7%,transparent);
+  backdrop-filter: blur(24px) saturate(145%);
+}
+.conversion-strip {
+  animation: retention-enter .3s cubic-bezier(.2,.8,.2,1) both;
+}
+.conversion-strip article + article,
+.session-table > div,
+.coupon-list > div {
+  border-color: var(--tm-line);
+}
+.conversion-strip article {
+  transition: background-color .2s ease, transform .26s cubic-bezier(.2,.8,.2,1);
+}
+.conversion-strip article:hover {
+  background: color-mix(in srgb,var(--tm-accent) 6%,transparent);
+  transform: translateY(-1px);
+}
+.retention-panel {
+  position: relative;
+  overflow: hidden;
+  animation: retention-enter .32s cubic-bezier(.2,.8,.2,1) both;
+  transition: transform .28s cubic-bezier(.2,.8,.2,1), border-color .22s ease, box-shadow .25s ease, background-color .22s ease;
+}
+.retention-grid:nth-of-type(4) .retention-panel { animation-delay: .05s; }
+.retention-grid:nth-of-type(5) .retention-panel { animation-delay: .1s; }
+.model-archive { animation-delay: .14s; }
+.retention-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg,color-mix(in srgb,var(--tm-glow) 7%,transparent),transparent 42%,color-mix(in srgb,var(--tm-accent) 5%,transparent));
+  pointer-events: none;
+}
+.retention-panel > * { position: relative; z-index: 1; }
+.retention-panel:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb,var(--tm-accent) 38%,var(--tm-line));
+  background: var(--tm-glass-strong);
+  box-shadow: 0 18px 44px color-mix(in srgb,var(--tm-glow) 14%,transparent), inset 0 1px 0 color-mix(in srgb,var(--tm-ink) 9%,transparent);
+}
+.category-ring {
+  box-shadow: 0 0 32px color-mix(in srgb,var(--tm-glow) 16%,transparent);
+  animation: retention-ring-enter .34s cubic-bezier(.2,.8,.2,1) both;
+}
+.category-ring > span { background: var(--tm-bg); }
+.category-list i { background: var(--tm-accent); }
+.category-list > div:nth-child(2) i { background: var(--tm-glow); }
+.category-list > div:nth-child(3) i { background: color-mix(in srgb,var(--tm-ink) 34%,var(--tm-bg)); }
+.budget-progress { background: var(--tm-surface-strong); }
+.budget-progress i {
+  background: var(--tm-accent);
+  transform-origin: left;
+  animation: retention-progress-enter .34s cubic-bezier(.2,.8,.2,1) both;
+  box-shadow: 0 0 18px color-mix(in srgb,var(--tm-accent) 24%,transparent);
+}
+.model-stat-grid article { background: var(--tm-surface); }
+.model-stat-grid em {
+  background: color-mix(in srgb,var(--tm-accent) 18%,var(--tm-bg));
+  color: var(--tm-ink);
+}
+@keyframes retention-enter {
+  from { opacity: 0; transform: translateY(8px) scale(.994); filter: blur(4px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes retention-ring-enter {
+  from { opacity: .25; transform: scale(.9) rotate(-10deg); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes retention-progress-enter {
+  from { transform: scaleX(.04); opacity: .35; }
+  to { transform: scaleX(1); opacity: 1; }
+}
+:global(.motion-off) .codex-retention *,
+:global(.motion-off) .retention-panel::before {
+  animation: none !important;
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .codex-retention *,
+  .retention-panel::before { animation: none !important; transition: none !important; }
+}
 </style>
