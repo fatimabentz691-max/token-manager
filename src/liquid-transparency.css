@@ -1,0 +1,93 @@
+/*
+ * 液态玻璃全局通透度收口层。
+ * 本文件最后加载，所有主结构表面只读取 --tm-liquid-surface，避免主题、侧栏、卡片和悬浮窗各自使用不同透明度。
+ */
+html.theme-liquid-glass,
+html.theme-liquid-glass.liquid-tone-clear,
+html.theme-liquid-glass.liquid-tone-dark {
+  --tm-clear-glass-uniform: var(--tm-liquid-surface);
+  --tm-clear-glass-primary: var(--tm-liquid-surface);
+  --tm-clear-glass-card: var(--tm-liquid-surface);
+  --tm-clear-glass-inner: var(--tm-liquid-surface);
+}
+
+html.theme-liquid-glass .theme-liquid-glass :where(
+  .app-titlebar,
+  .content > header,
+  .shell > aside,
+  .card,
+  .visual-card,
+  .provider-overview,
+  .dashboard-empty,
+  .model-bill,
+  .settings-nav,
+  .settings-detail,
+  .conversion-strip,
+  .all-overview-grid > section,
+  .all-overview-grid > aside,
+  .monitor-status-bar,
+  .dashboard-switcher,
+  .remote-content,
+  .prompt-card,
+  .arena-card,
+  .report-heading,
+  .floating-control-card,
+  .floating-preview-card,
+  .all-summary,
+  .floating-dashboard-item,
+  .status-capsule,
+  .capsule-detail,
+  .arena-source,
+  .arena-commandbar,
+  .arena-table,
+  .arena-detail,
+  .prompt-categories,
+  .quality-panel,
+  .glass-distortion-control,
+  .liquid-appearance-panel,
+  .liquid-transparency-control,
+  .monochrome-note,
+  .glass-card,
+  .command-status
+):not([data-liquid-nested-suppressed="true"]) {
+  background: var(--tm-liquid-surface) !important;
+  background-image: none !important;
+}
+
+html.theme-liquid-glass .theme-liquid-glass.shell > aside,
+html.theme-liquid-glass[data-glass-background="custom"] .theme-liquid-glass.shell > aside {
+  background: var(--tm-liquid-surface) !important;
+  background-image: none !important;
+}
+
+/* 自定义图片或视频也不得提高某一块表面的体积色。 */
+html.theme-liquid-glass[data-glass-background="custom"] .theme-liquid-glass :where(
+  .app-titlebar,
+  .content > header,
+  .shell > aside,
+  .card,
+  .visual-card,
+  .settings-nav,
+  .settings-detail,
+  .monitor-status-bar,
+  .dashboard-switcher,
+  .floating-dashboard-item,
+  .status-capsule,
+  .arena-card,
+  .glass-card,
+  .command-status
+):not([data-liquid-nested-suppressed="true"]) {
+  background: var(--tm-liquid-surface) !important;
+  background-image: none !important;
+}
+
+/* 连接状态只改变操作胶囊和状态点，整条状态栏保持当前玻璃材质。 */
+html.theme-liquid-glass .theme-liquid-glass .monitor-status-bar.is-live {
+  background: var(--tm-liquid-surface) !important;
+  color: var(--tm-ink) !important;
+}
+
+/* 悬浮窗口外壳保持完全透明，避免 Windows 透明窗口边缘出现方形残留。 */
+html.theme-liquid-glass .theme-liquid-glass.floating-shell {
+  background: transparent !important;
+}

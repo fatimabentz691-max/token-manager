@@ -1,6 +1,6 @@
 import type { Provider, Usage, Dashboard } from './types'
 export const providers: Provider[] = [
- ['hunyuan','腾讯混元'],['doubao','豆包（火山方舟）'],['qianfan','文心千帆'],['bailian','通义百炼'],['zhipu','智谱 AI'],['deepseek','DeepSeek'],['kimi','Kimi'],['mimo','小米 MiMo'],['spark','讯飞星火'],['minimax','MiniMax'],['stepfun','阶跃星辰'],['yi','零一万物'],['sensenova','商汤日日新'],['baichuan','百川智能'],['openai','OpenAI'],['anthropic','Anthropic'],['gemini','Google Gemini'],['custom','自定义 OpenAI 兼容']
+ ['hunyuan','腾讯混元'],['doubao','豆包（火山方舟）'],['qianfan','文心千帆'],['bailian','通义百炼'],['zhipu','智谱 AI'],['deepseek','DeepSeek'],['kimi','Kimi'],['mimo','小米 MiMo'],['spark','讯飞星火'],['minimax','MiniMax'],['stepfun','阶跃星辰'],['yi','零一万物'],['sensenova','商汤日日新'],['baichuan','百川智能'],['opencode-go','OpenCode Go'],['openai','OpenAI'],['anthropic','Anthropic'],['gemini','Google Gemini'],['custom','自定义 OpenAI 兼容']
 ].map(([id,name]) => ({ id, name, source: id === 'deepseek' ? '官方账单' : '本地代理', description:'尚未配置', configured:false, models:[] }))
 export const demoUsage: Usage[] = [
  {id:'1',provider:'Codex',model:'codex',at:new Date().toISOString(),input:24000,output:8600,cached:3200,cost:0,task:'调试'},

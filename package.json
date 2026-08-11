@@ -1,6 +1,6 @@
 {
   "name": "token-manager",
-  "version": "0.2.0",
+  "version": "0.11.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,10 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@lucide/vue": "^1.26.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-opener": "^2.5.4",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "echarts": "^5.5.1",
+    "motion": "^12.43.0",
     "pinia": "^2.2.2",
     "simple-icons": "^16.26.0",
     "vue": "^3.5.0"

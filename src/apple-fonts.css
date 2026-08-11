@@ -1,0 +1,34 @@
+:root {
+  /* Windows 不预装苹方：优先使用用户已安装的苹方，其次使用系统级无衬线字体。 */
+  --apple-font: "PingFang SC", "苹方-简", "PingFang TC", "SF Pro Text",
+    "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --apple-mono: "SFMono-Regular", "SF Mono", ui-monospace, "Cascadia Code",
+    Consolas, monospace;
+  font-family: var(--apple-font);
+  font-kerning: normal;
+  font-optical-sizing: auto;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+button,
+input,
+select,
+textarea,
+table {
+  font-family: var(--apple-font) !important;
+}
+
+body {
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+}
+
+code,
+kbd,
+pre {
+  font-family: var(--apple-mono) !important;
+  font-variant-ligatures: none;
+}

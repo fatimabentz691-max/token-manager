@@ -2,7 +2,7 @@
 
 Token Manager 不再使用自绘图形或文字占位。下列资源均取自平台官方网站、官方静态资源域名或官方代码仓库，并随应用本地打包，运行时不请求远程图片。
 
-界面只通过 CSS `grayscale(1) contrast(4)` 统一为黑白显示，不修改原始文件的几何比例，不拉伸、不裁切。商标及品牌资源归对应权利人所有，仅用于标识用户正在配置或查看的平台。
+界面直接显示官网资源的原始彩色版本，不增加灰度、反色或强制品牌色滤镜，也不修改原始文件的几何比例、不拉伸、不裁切。商标及品牌资源归对应权利人所有，仅用于标识用户正在配置或查看的平台。
 
 | 平台 | 本地文件 | 官方来源 |
 | --- | --- | --- |
@@ -24,4 +24,4 @@ Token Manager 不再使用自绘图形或文字占位。下列资源均取自平
 | Google Gemini | `gemini.svg` | https://www.gstatic.com/lamda/images/gemini_sparkle_aurora_33f86dc0c0257da337c63.svg |
 | 小米 MiMo | `mimo.png` | https://github.com/XiaomiMiMo/MiMo/raw/main/figures/Xiaomi_MiMo.png |
 
-更新时间：2026-07-14。
+更新时间：2026-07-17。

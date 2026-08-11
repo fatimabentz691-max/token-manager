@@ -1,0 +1,1033 @@
+/* Token Manager · Liquid Glass theme
+   以多层透射、边缘高光和空间环境替代单层半透明模糊。 */
+:root {
+  --glass-pointer-x: 62%;
+  --glass-pointer-y: 18%;
+  --glass-radius: 1.375rem;
+  --glass-ease: cubic-bezier(.16, 1, .3, 1);
+}
+
+.liquid-glass-environment {
+  position: fixed !important;
+  z-index: 0;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  min-width: 100vw !important;
+  min-height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: block !important;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at var(--glass-pointer-x) var(--glass-pointer-y), color-mix(in srgb, var(--tm-accent) 12%, transparent), transparent 30rem),
+    linear-gradient(145deg, #05070d 0%, #0a1020 48%, #070912 100%);
+  contain: paint;
+}
+.glass-user-background {
+  position: absolute;
+  z-index: 1;
+  inset: -2%;
+  background-image:
+    linear-gradient(145deg, rgba(5,8,18,.22), rgba(7,10,20,.48)),
+    var(--tm-liquid-background-image);
+  background-position: center;
+  background-size: cover;
+  filter: saturate(.92) contrast(.98) brightness(.82);
+  opacity: 0;
+  transform: scale(1.035);
+  transition: opacity .24s var(--glass-ease);
+}
+.liquid-custom-background:not(.glass-webgl-active) .glass-user-background {
+  opacity: 1;
+}
+.glass-webgl-active .glass-user-background {
+  /* WebGL 第一通道已采样同一图片，CSS 副本必须隐藏，避免覆盖真实折射结果。 */
+  opacity: 0;
+}
+.liquid-glass-environment.has-video-background .glass-user-background {
+  /* 视频优先于已保存图片；WebGL 不可用时由 <video> 自身承担 cover 降级显示。 */
+  opacity: 0;
+}
+.glass-webgl-fallback .glass-user-background,
+.glass-webgl-fallback .liquid-video-source {
+  filter: url("#token-manager-liquid-refraction") saturate(.94) contrast(1.02) brightness(.84);
+  transform: scale(var(--glass-fallback-scale, 1.045));
+}
+.glass-atmosphere,
+.glass-caustics { z-index: 2; }
+.liquid-glass-environment .particle-field { z-index: 3; }
+.glass-webgl-active .liquid-glass-environment {
+  background: #050812;
+}
+.glass-webgl-active .liquid-glass-environment .glass-atmosphere,
+.glass-webgl-active .liquid-glass-environment .glass-caustics {
+  opacity: 0;
+  animation: none;
+}
+.glass-webgl-active .liquid-glass-environment .particle-field {
+  z-index: 2;
+  /* 环境细节已绘入离屏纹理，避免未折射的 DOM 粒子盖在玻璃表面。 */
+  opacity: 0;
+}
+.glass-atmosphere {
+  position: absolute;
+  width: min(52vw, 52rem);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  filter: blur(5.5rem);
+  opacity: .24;
+  will-change: transform;
+}
+.glass-atmosphere-a {
+  top: -30%;
+  left: -10%;
+  background: var(--tm-ambient-a);
+  animation: glass-orbit-a 20s ease-in-out infinite alternate;
+}
+.glass-atmosphere-b {
+  right: -18%;
+  bottom: -38%;
+  background: var(--tm-ambient-b);
+  animation: glass-orbit-b 24s ease-in-out infinite alternate;
+}
+.glass-atmosphere-c {
+  top: 35%;
+  left: 48%;
+  width: min(34vw, 34rem);
+  background: color-mix(in srgb, var(--tm-accent) 52%, #42e8ff);
+  opacity: .1;
+  animation: glass-orbit-c 18s ease-in-out infinite alternate;
+}
+.glass-caustics {
+  position: absolute;
+  inset: -15%;
+  opacity: .16;
+  background:
+    repeating-radial-gradient(ellipse at 28% 18%, transparent 0 5rem, rgba(255,255,255,.11) 5.2rem 5.3rem, transparent 5.6rem 10rem);
+  filter: url("#token-manager-liquid-refraction") blur(.4rem);
+  transform: rotate(-8deg) scale(1.06);
+}
+.liquid-glass-environment .particle-field { opacity: .72; mix-blend-mode: screen; }
+.liquid-glass-environment.compact .glass-atmosphere { filter: blur(3.5rem); opacity: .18; }
+
+.theme-liquid-glass.shell,
+.theme-liquid-glass.floating-shell {
+  position: relative;
+  isolation: isolate;
+  background: transparent !important;
+}
+.theme-liquid-glass .content,
+.theme-liquid-glass.floating-shell > :not(.liquid-glass-environment) {
+  position: relative;
+}
+.theme-liquid-glass .content { z-index: 1; }
+.theme-liquid-glass.shell > aside {
+  position: fixed !important;
+  z-index: 10;
+}
+.theme-liquid-glass.floating-shell > :not(.liquid-glass-environment) { z-index: 1; }
+
+/*
+ * Windows 安全渲染必须拥有不依赖 GPU 合成面的实色底层。
+ * 即使显卡驱动拒绝 backdrop-filter，内容层也会保持可读，不会退化为透明黑窗。
+ */
+.glass-webgl-fallback .theme-liquid-glass.shell,
+.glass-webgl-fallback .theme-liquid-glass.floating-shell {
+  background: var(--tm-bg, #070a12) !important;
+}
+.glass-webgl-fallback .liquid-glass-environment {
+  background:
+    radial-gradient(circle at var(--glass-pointer-x) var(--glass-pointer-y), color-mix(in srgb, var(--tm-accent) 14%, transparent), transparent 30rem),
+    radial-gradient(circle at 82% 78%, color-mix(in srgb, var(--tm-glow) 12%, transparent), transparent 34rem),
+    linear-gradient(145deg, #05070d 0%, #0a1020 48%, #070912 100%);
+}
+
+/* 光学表面：三层背景分别承担反射、体积色和透射。 */
+.theme-liquid-glass :where(
+  .card, .provider-overview, .dashboard-empty, .visual-card, .model-bill,
+  .settings-nav, .settings-detail, .command-center, .retention-panel,
+  .conversion-strip, .all-overview-grid > section, .all-overview-grid > aside,
+  .monitor-status-bar, .dashboard-switcher, .floating-dashboard-item,
+  .status-capsule, .capsule-detail, .remote-content, .prompt-card,
+  .arena-card, .report-heading, .floating-control-card, .floating-preview-card
+) {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid var(--tm-glass-edge) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.035) 42%, rgba(255,255,255,.075)),
+    radial-gradient(circle at var(--tm-card-pointer-x, 50%) var(--tm-card-pointer-y, 50%), color-mix(in srgb, var(--tm-accent) 4%, transparent), transparent 28rem),
+    rgba(10,14,26,.52) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.22),
+    inset 0 -1px 0 rgba(255,255,255,.035),
+    0 1.25rem 3.75rem rgba(0,0,0,.26),
+    0 0 2.75rem color-mix(in srgb, var(--tm-glow) 8%, transparent) !important;
+  backdrop-filter: blur(var(--tm-glass-blur)) saturate(168%) contrast(104%);
+  -webkit-backdrop-filter: blur(var(--tm-glass-blur)) saturate(168%) contrast(104%);
+}
+
+/* WebGL2 可用时，真实折射已在离屏纹理中完成；DOM 层只承担玻璃体积色与内容承载。 */
+.glass-webgl-active .theme-liquid-glass :where(
+  .card, .provider-overview, .dashboard-empty, .visual-card, .model-bill,
+  .settings-nav, .settings-detail, .command-center, .retention-panel,
+  .conversion-strip, .all-overview-grid > section, .all-overview-grid > aside,
+  .monitor-status-bar, .dashboard-switcher, .floating-dashboard-item,
+  .status-capsule, .capsule-detail, .remote-content, .prompt-card,
+  .arena-card, .report-heading, .floating-control-card, .floating-preview-card
+) {
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.075), rgba(255,255,255,.012) 44%, rgba(255,255,255,.035)),
+    rgba(7,11,23,.085) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.20),
+    inset 0 -1px 0 rgba(255,255,255,.045),
+    0 .45rem 1.1rem rgba(0,0,0,.20) !important;
+}
+/* 用户图片可能包含大面积白色。自定义背景启用时提高玻璃体积色，
+   保留图像折射的同时让主界面、榜单和悬浮窗文字始终清晰。 */
+[data-glass-background="custom"].glass-webgl-active .theme-liquid-glass :where(
+  .card, .provider-overview, .dashboard-empty, .visual-card, .model-bill,
+  .settings-nav, .settings-detail, .command-center, .retention-panel,
+  .conversion-strip, .all-overview-grid > section, .all-overview-grid > aside,
+  .monitor-status-bar, .dashboard-switcher, .floating-dashboard-item,
+  .status-capsule, .capsule-detail, .remote-content, .prompt-card,
+  .arena-card, .report-heading, .floating-control-card, .floating-preview-card
+) {
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.115), rgba(255,255,255,.026) 46%, rgba(255,255,255,.06)),
+    rgba(4,7,15,.6) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.24),
+    inset 0 -1px 0 rgba(255,255,255,.05),
+    0 .7rem 1.8rem rgba(0,0,0,.3) !important;
+}
+[data-glass-background="custom"].glass-webgl-active .theme-liquid-glass.shell > aside {
+  background:
+    linear-gradient(160deg, rgba(255,255,255,.11), rgba(255,255,255,.025)),
+    rgba(4,7,14,.66) !important;
+}
+[data-glass-background="custom"].glass-webgl-active .theme-liquid-glass .content > header {
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.12), rgba(255,255,255,.028)),
+    rgba(4,7,14,.6) !important;
+}
+[data-glass-background="custom"].glass-webgl-active .theme-liquid-glass.floating-shell {
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.025)),
+    rgba(4,7,14,.58) !important;
+}
+[data-glass-background="custom"].glass-webgl-active .theme-liquid-glass :where(
+  .arena-page-heading, .dashboard-context-heading
+) {
+  padding: .9rem 1rem;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 1rem;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.1), rgba(255,255,255,.025)),
+    rgba(4,7,14,.6);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 .75rem 1.8rem rgba(0,0,0,.2);
+}
+[data-glass-background="custom"].glass-webgl-active .theme-liquid-glass :where(
+  .floating-dashboard-header, .floating-dashboard-footer
+) {
+  border-color: rgba(255,255,255,.14) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.1), rgba(255,255,255,.02)),
+    rgba(4,7,14,.66) !important;
+}
+.theme-liquid-glass :where(
+  .card, .provider-overview, .visual-card, .model-bill, .command-center,
+  .retention-panel, .floating-dashboard-item, .status-capsule
+)::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(112deg, rgba(255,255,255,.18), transparent 22% 74%, color-mix(in srgb, var(--tm-accent) 10%, transparent)),
+    radial-gradient(circle at var(--tm-card-pointer-x, 50%) var(--tm-card-pointer-y, 50%), rgba(255,255,255,.2), transparent 14rem);
+  opacity: .08;
+  transition: opacity .22s var(--glass-ease);
+}
+.theme-liquid-glass :where(.card, .provider-overview, .visual-card, .model-bill, .command-center, .retention-panel).tm-spotlight-active {
+  transform: translateY(-2px) scale(1.001);
+  border-color: color-mix(in srgb, var(--tm-accent) 34%, rgba(255,255,255,.18)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.3),
+    0 1.75rem 4.5rem rgba(0,0,0,.34),
+    0 0 3.5rem color-mix(in srgb, var(--tm-glow) 14%, transparent) !important;
+}
+.theme-liquid-glass :where(.card, .provider-overview, .visual-card, .model-bill, .command-center, .retention-panel).tm-spotlight-active::after { opacity: 1; }
+
+.theme-liquid-glass.shell > aside {
+  isolation: isolate;
+  border-right: 1px solid rgba(255,255,255,.13) !important;
+  background:
+    linear-gradient(160deg, rgba(255,255,255,.13), rgba(255,255,255,.03) 48%, rgba(255,255,255,.075)),
+    radial-gradient(circle at 0 0, color-mix(in srgb, var(--tm-accent) 10%, transparent), transparent 20rem),
+    rgba(5,8,16,.48) !important;
+  box-shadow:
+    inset -1px 0 0 rgba(255,255,255,.065),
+    inset 1px 0 0 rgba(255,255,255,.08),
+    1rem 0 4rem rgba(0,0,0,.18);
+  backdrop-filter: blur(2.5rem) saturate(172%) contrast(103%);
+  -webkit-backdrop-filter: blur(2.5rem) saturate(172%) contrast(103%);
+}
+.theme-liquid-glass.shell > aside > * {
+  position: relative;
+  z-index: 1;
+}
+.theme-liquid-glass.shell > aside .brand {
+  min-width: 0;
+  margin: -.25rem -.25rem 0;
+  padding: .7rem .75rem;
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: 1rem;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.13), rgba(255,255,255,.035)),
+    rgba(8,12,23,.24);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.2),
+    0 .65rem 1.8rem rgba(0,0,0,.13);
+  backdrop-filter: blur(1.35rem) saturate(158%);
+  -webkit-backdrop-filter: blur(1.35rem) saturate(158%);
+}
+.theme-liquid-glass.shell > aside .brand > span {
+  overflow: visible;
+  color: var(--tm-ink) !important;
+  text-overflow: clip;
+  white-space: nowrap;
+  text-shadow: 0 1px 1px rgba(0,0,0,.26);
+}
+.theme-liquid-glass.shell > aside .brand > small,
+.theme-liquid-glass.shell > aside .tagline {
+  color: color-mix(in srgb, var(--tm-ink) 70%, transparent) !important;
+}
+.theme-liquid-glass.shell > aside .tagline {
+  margin: .55rem .5rem 1.25rem !important;
+  letter-spacing: .01em;
+  text-shadow: 0 1px 1px rgba(0,0,0,.2);
+}
+.theme-liquid-glass.shell > aside nav {
+  min-width: 0;
+  gap: .375rem;
+  padding: .375rem;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 1.125rem;
+  background:
+    linear-gradient(155deg, rgba(255,255,255,.065), rgba(255,255,255,.015)),
+    rgba(5,8,16,.16);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.1);
+  backdrop-filter: blur(1.15rem) saturate(148%);
+  -webkit-backdrop-filter: blur(1.15rem) saturate(148%);
+}
+.theme-liquid-glass.shell > aside .privacy {
+  border: 1px solid rgba(255,255,255,.11) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.085), rgba(255,255,255,.022)),
+    rgba(5,8,16,.2) !important;
+  color: color-mix(in srgb, var(--tm-ink) 68%, transparent) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.15),
+    0 .75rem 2rem rgba(0,0,0,.13);
+  backdrop-filter: blur(1.25rem) saturate(150%);
+  -webkit-backdrop-filter: blur(1.25rem) saturate(150%);
+}
+.glass-webgl-active .theme-liquid-glass.shell > aside {
+  background:
+    linear-gradient(160deg, rgba(255,255,255,.095), rgba(255,255,255,.018) 52%, rgba(255,255,255,.055)),
+    radial-gradient(circle at 0 0, color-mix(in srgb, var(--tm-accent) 8%, transparent), transparent 20rem),
+    rgba(5,8,16,.18) !important;
+  backdrop-filter: blur(1.2rem) saturate(148%);
+  -webkit-backdrop-filter: blur(1.2rem) saturate(148%);
+}
+.theme-liquid-glass .content > header {
+  border: 1px solid rgba(255,255,255,.14);
+  background: linear-gradient(135deg, rgba(255,255,255,.11), rgba(255,255,255,.045)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 1.25rem 3rem rgba(0,0,0,.17);
+  backdrop-filter: blur(2.25rem) saturate(175%);
+  -webkit-backdrop-filter: blur(2.25rem) saturate(175%);
+}
+.glass-webgl-active .theme-liquid-glass .content > header {
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.1), rgba(255,255,255,.022)),
+    rgba(7,11,23,.14) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.theme-liquid-glass .brand-logo { box-shadow: 0 .5rem 1.8rem rgba(0,0,0,.3), 0 0 1.5rem color-mix(in srgb,var(--tm-accent) 22%,transparent); }
+.theme-liquid-glass.shell > aside nav button {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.055);
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.045), rgba(255,255,255,.012)),
+    rgba(8,12,23,.09) !important;
+  color: color-mix(in srgb, var(--tm-ink) 68%, transparent) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.065);
+  backdrop-filter: blur(.9rem) saturate(140%);
+  -webkit-backdrop-filter: blur(.9rem) saturate(140%);
+  transition:
+    color .22s var(--glass-ease),
+    border-color .22s var(--glass-ease),
+    background-color .22s var(--glass-ease),
+    box-shadow .24s var(--glass-ease),
+    transform .22s var(--glass-ease);
+}
+.theme-liquid-glass.shell > aside nav button:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--tm-accent) 24%, rgba(255,255,255,.12)) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.095), rgba(255,255,255,.025)),
+    color-mix(in srgb, var(--tm-accent) 5%, rgba(8,12,23,.12)) !important;
+  color: var(--tm-ink) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.15),
+    0 .55rem 1.35rem rgba(0,0,0,.13),
+    0 0 1.2rem color-mix(in srgb, var(--tm-glow) 7%, transparent) !important;
+}
+.theme-liquid-glass.shell > aside nav button.active {
+  border-color: color-mix(in srgb, var(--tm-accent) 42%, rgba(255,255,255,.2)) !important;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.13), color-mix(in srgb, var(--tm-accent) 18%, transparent)),
+    color-mix(in srgb, var(--tm-accent) 7%, rgba(8,12,23,.18)) !important;
+  color: var(--tm-ink) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.22),
+    inset 0 0 0 1px color-mix(in srgb, var(--tm-accent) 8%, transparent),
+    0 .75rem 2rem rgba(0,0,0,.18),
+    0 0 1.75rem color-mix(in srgb,var(--tm-glow) 12%,transparent) !important;
+}
+.theme-liquid-glass.shell > aside nav button.active::after {
+  content: "";
+  width: .375rem;
+  height: .375rem;
+  flex: 0 0 auto;
+  margin-left: auto;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--tm-accent) 82%, white);
+  box-shadow: 0 0 .9rem color-mix(in srgb, var(--tm-accent) 68%, transparent);
+}
+.theme-liquid-glass.shell > aside nav button.active:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+[data-glass-background="custom"] .theme-liquid-glass.shell > aside :where(.brand, nav, .privacy) {
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.105), rgba(255,255,255,.022)),
+    rgba(4,7,14,.38) !important;
+  border-color: rgba(255,255,255,.14) !important;
+}
+[data-glass-background="custom"] .theme-liquid-glass.shell > aside nav button {
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.055), rgba(255,255,255,.012)),
+    rgba(4,7,14,.2) !important;
+}
+[data-glass-background="custom"] .theme-liquid-glass.shell > aside nav button.active {
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.13), color-mix(in srgb, var(--tm-accent) 18%, transparent)),
+    color-mix(in srgb, var(--tm-accent) 7%, rgba(4,7,14,.34)) !important;
+}
+
+.theme-liquid-glass :where(button, .outline, .icon-action, .dashboard-switcher > button, .dashboard-tab) {
+  border-color: rgba(255,255,255,.14) !important;
+  background: linear-gradient(145deg, rgba(255,255,255,.14), rgba(255,255,255,.055)) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 .45rem 1.4rem rgba(0,0,0,.13);
+  backdrop-filter: blur(1.25rem) saturate(150%);
+}
+.theme-liquid-glass :where(button, [role="button"]):not(:disabled):hover {
+  border-color: color-mix(in srgb,var(--tm-accent) 34%,rgba(255,255,255,.14)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.26), 0 .75rem 1.8rem rgba(0,0,0,.18), 0 0 1.5rem color-mix(in srgb,var(--tm-accent) 10%,transparent);
+}
+.theme-liquid-glass :where(button, [role="button"]):not(:disabled):active {
+  transform: scale(.975);
+  filter: brightness(.94);
+}
+.theme-liquid-glass :where(.sync, .primary, .monitor-launch, .dashboard-switcher .active) {
+  background: linear-gradient(135deg, color-mix(in srgb,var(--tm-accent) 76%,white), color-mix(in srgb,var(--tm-glow) 62%,var(--tm-accent))) !important;
+  color: #050811 !important;
+  border-color: rgba(255,255,255,.38) !important;
+}
+
+.theme-liquid-glass :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea, code) {
+  border: 1px solid rgba(255,255,255,.13) !important;
+  background: rgba(2,5,12,.38) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+  backdrop-filter: blur(1rem);
+}
+.theme-liquid-glass :where(input, select, textarea):focus {
+  border-color: color-mix(in srgb,var(--tm-accent) 64%,white) !important;
+  box-shadow: 0 0 0 .2rem color-mix(in srgb,var(--tm-accent) 24%,transparent), inset 0 1px 0 rgba(255,255,255,.08) !important;
+}
+.theme-liquid-glass table { border-color: rgba(255,255,255,.09); }
+.theme-liquid-glass tbody tr:hover { background: rgba(255,255,255,.045); }
+.theme-liquid-glass :where(td, th) { border-color: rgba(255,255,255,.09) !important; }
+
+.theme-liquid-glass :where(.track, .quota-track, .provider-ranking-meter, .mini-bars) {
+  background: rgba(255,255,255,.075) !important;
+  box-shadow: inset 0 1px .3rem rgba(0,0,0,.28);
+}
+.theme-liquid-glass :where(.track span, .quota-track i, .provider-ranking-meter i, .metric-bars i, .usage-bars i, .floating-chart-bars i) {
+  background: linear-gradient(90deg, var(--tm-accent), color-mix(in srgb,var(--tm-glow) 68%,white)) !important;
+  box-shadow: 0 0 1rem color-mix(in srgb,var(--tm-accent) 30%,transparent);
+}
+.theme-liquid-glass :where(svg polyline[stroke="#111"], svg path[stroke="#111"]) { stroke: var(--tm-accent) !important; }
+.theme-liquid-glass :where(.all-summary, .balance-primary) {
+  background:
+    radial-gradient(circle at 82% 12%, color-mix(in srgb,var(--tm-accent) 24%,transparent), transparent 19rem),
+    linear-gradient(135deg, rgba(255,255,255,.16), rgba(255,255,255,.055)) !important;
+  border: 1px solid rgba(255,255,255,.2) !important;
+  color: var(--tm-ink) !important;
+}
+
+/* 悬浮窗与 AI 状态胶囊使用更高透射率，保持桌面背景可感知。 */
+.theme-liquid-glass.floating-shell {
+  border: 1px solid rgba(255,255,255,.21) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.035)),
+    rgba(6,9,17,.64) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.24), 0 1.5rem 4rem rgba(0,0,0,.35) !important;
+  backdrop-filter: blur(2.5rem) saturate(175%);
+  -webkit-backdrop-filter: blur(2.5rem) saturate(175%);
+}
+.glass-webgl-active .theme-liquid-glass.floating-shell {
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.105), rgba(255,255,255,.018)),
+    rgba(5,8,17,.18) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.theme-liquid-glass .floating-dashboard-header { border-color: rgba(255,255,255,.1) !important; }
+.theme-liquid-glass .floating-dashboard-item.active,
+.theme-liquid-glass .status-capsule {
+  border-color: color-mix(in srgb,var(--tm-accent) 44%,rgba(255,255,255,.18)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.23), 0 1rem 2.6rem rgba(0,0,0,.25), 0 0 2rem color-mix(in srgb,var(--tm-accent) 13%,transparent) !important;
+}
+.theme-liquid-glass .capsule-summary { border-radius: 999px !important; }
+
+/* 性能模式保留空间层级，降低模糊、粒子和连续环境动画成本。 */
+[data-glass-quality="performance"] .theme-liquid-glass {
+  --tm-glass-blur: 16px;
+}
+[data-glass-quality="performance"] .liquid-glass-environment .glass-atmosphere {
+  animation: none;
+  filter: blur(4rem);
+  opacity: .15;
+}
+[data-glass-quality="performance"] .liquid-glass-environment .glass-caustics { display: none; }
+[data-glass-quality="performance"] .theme-liquid-glass :where(
+  .card, .provider-overview, .visual-card, .model-bill, .settings-nav, .settings-detail,
+  .command-center, .retention-panel, .floating-dashboard-item, .status-capsule
+) {
+  backdrop-filter: blur(1rem) saturate(135%);
+  -webkit-backdrop-filter: blur(1rem) saturate(135%);
+}
+
+/*
+ * GPU 折射已经负责卡片下方的光学采样。激活后禁止 DOM 再建立 backdrop-filter
+ * 合成面，既避免二次模糊吃掉扭曲细节，也规避 WebView2 多层合成黑屏。
+ * 这段必须位于性能模式之后，确保不会被后续规则重新开启。
+ */
+.glass-webgl-active .theme-liquid-glass,
+.glass-webgl-active .theme-liquid-glass * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+@keyframes glass-orbit-a { to { transform: translate3d(12vw, 8vh, 0) scale(1.12); } }
+@keyframes glass-orbit-b { to { transform: translate3d(-10vw, -7vh, 0) scale(.92); } }
+@keyframes glass-orbit-c { to { transform: translate3d(-8vw, 9vh, 0) scale(1.08); } }
+
+.motion-off .liquid-glass-environment .glass-atmosphere { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .liquid-glass-environment .glass-atmosphere { animation: none !important; }
+  .theme-liquid-glass :where(.card, .provider-overview, .visual-card, .model-bill, button) { transition: none !important; }
+}
+
+/* 透明白材质：保持玻璃折射，但不施加黑色体积色。 */
+.liquid-tone-clear .liquid-glass-environment {
+  background:
+    radial-gradient(circle at var(--glass-pointer-x) var(--glass-pointer-y), color-mix(in srgb, var(--tm-accent) 7%, transparent), transparent 28rem),
+    linear-gradient(145deg, #eef2f8 0%, #fbfcfe 52%, #e8edf5 100%);
+}
+.liquid-tone-clear.glass-webgl-active .liquid-glass-environment { background: #f4f7fb; }
+.liquid-tone-clear .glass-user-background {
+  background-image:
+    linear-gradient(145deg, rgba(255,255,255,.025), rgba(255,255,255,.16)),
+    var(--tm-liquid-background-image);
+  filter: saturate(.96) contrast(1.01) brightness(1.03);
+}
+.liquid-tone-clear .theme-liquid-glass :where(
+  .card, .provider-overview, .dashboard-empty, .visual-card, .model-bill,
+  .settings-nav, .settings-detail, .command-center, .retention-panel,
+  .conversion-strip, .all-overview-grid > section, .all-overview-grid > aside,
+  .monitor-status-bar, .dashboard-switcher, .floating-dashboard-item,
+  .status-capsule, .capsule-detail, .remote-content, .prompt-card,
+  .arena-card, .report-heading, .floating-control-card, .floating-preview-card
+) {
+  border-color: rgba(255,255,255,.72) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.62), rgba(255,255,255,.18) 46%, rgba(255,255,255,.36)),
+    rgba(255,255,255,.18) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.9),
+    inset 0 -1px 0 rgba(255,255,255,.28),
+    0 1.15rem 3.4rem rgba(42,51,68,.14) !important;
+}
+.liquid-tone-clear.glass-webgl-active .theme-liquid-glass :where(
+  .card, .provider-overview, .dashboard-empty, .visual-card, .model-bill,
+  .settings-nav, .settings-detail, .command-center, .retention-panel,
+  .conversion-strip, .all-overview-grid > section, .all-overview-grid > aside,
+  .monitor-status-bar, .dashboard-switcher, .floating-dashboard-item,
+  .status-capsule, .capsule-detail, .remote-content, .prompt-card,
+  .arena-card, .report-heading, .floating-control-card, .floating-preview-card
+) {
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.44), rgba(255,255,255,.08) 48%, rgba(255,255,255,.22)),
+    rgba(255,255,255,.07) !important;
+}
+.liquid-tone-clear .theme-liquid-glass.shell > aside,
+.liquid-tone-clear .theme-liquid-glass .content > header {
+  border-color: rgba(255,255,255,.68) !important;
+  background:
+    linear-gradient(155deg, rgba(255,255,255,.66), rgba(255,255,255,.16)),
+    rgba(255,255,255,.14) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.88), 0 1rem 3.2rem rgba(46,55,72,.12) !important;
+}
+.liquid-tone-clear .theme-liquid-glass :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea, code) {
+  border-color: rgba(25,29,36,.12) !important;
+  background: rgba(255,255,255,.46) !important;
+}
+.liquid-tone-clear .theme-liquid-glass :where(button, .outline, .icon-action, .dashboard-switcher > button, .dashboard-tab) {
+  border-color: rgba(25,29,36,.12) !important;
+  background: linear-gradient(145deg, rgba(255,255,255,.72), rgba(255,255,255,.30)) !important;
+}
+
+/*
+ * 每个独立小组件都拥有自己的厚玻璃边缘。仅扭曲边缘反光层，
+ * 不扭曲文字和图表，因此数据仍保持清晰可读。
+ */
+.theme-liquid-glass :where(
+  .card, .visual-card, .provider-overview, .model-bill, .command-center,
+  .retention-panel, .floating-dashboard-item, .status-capsule,
+  .capsule-stats > span, .capsule-chart, .floating-dashboard-chart,
+  .floating-dashboard-extras > span, .floating-dashboard-footer,
+  .token-chart-summary > span, .connection-state, .cc-switch-state,
+  .prompt-stats > *, .model-stat-grid > article, .settings-nav, .settings-detail
+)::before {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  inset: 1px;
+  padding: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    conic-gradient(from 205deg at 50% 50%, rgba(255,255,255,.82), rgba(255,255,255,.08) 24%, color-mix(in srgb,var(--tm-accent) 18%,transparent) 51%, rgba(255,255,255,.62) 78%, rgba(255,255,255,.82)),
+    radial-gradient(circle at var(--tm-card-pointer-x,50%) var(--tm-card-pointer-y,50%), rgba(255,255,255,.9), transparent 26%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  /* 组件描边不能使用会扩大采样区域的 SVG 位移，否则 Windows WebView2 会在圆角外留下细线。 */
+  filter: none;
+  opacity: .5;
+}
+
+/*
+ * 原生 Acrylic 负责读取实时 Windows 桌面；悬浮窗不再用应用内图片或实色背景覆盖它。
+ * 深色/透明白只改变玻璃体积色，普通模式与 AI 胶囊模式共用同一套材质。
+ */
+.floating-window[data-native-glass="active"] .liquid-glass-environment {
+  background: transparent !important;
+}
+.floating-window[data-native-glass="active"] .liquid-glass-environment :where(
+  .glass-user-background, .glass-atmosphere, .glass-caustics, .particle-field,
+  .liquid-video-source, .liquid-glass-renderer
+) {
+  display: none !important;
+}
+.floating-window[data-native-glass="active"] .theme-liquid-glass.floating-shell,
+.floating-window[data-native-glass="active"].glass-webgl-fallback .theme-liquid-glass.floating-shell {
+  overflow: clip;
+  border: 1px solid rgba(255,255,255,.34) !important;
+  border-radius: 20px !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.015) 45%, rgba(255,255,255,.07)),
+    rgba(5,8,16,.32) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.42),
+    inset 0 -1px 0 rgba(255,255,255,.08),
+    0 1.5rem 4rem rgba(0,0,0,.26) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.floating-window[data-native-glass="active"].liquid-tone-clear .theme-liquid-glass.floating-shell,
+.floating-window[data-native-glass="active"].liquid-tone-clear.glass-webgl-fallback .theme-liquid-glass.floating-shell {
+  border-color: rgba(255,255,255,.72) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.28), rgba(255,255,255,.025) 50%, rgba(255,255,255,.14)),
+    rgba(255,255,255,.025) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.92),
+    inset 0 -1px 0 rgba(255,255,255,.24),
+    0 1.5rem 4rem rgba(31,38,52,.17) !important;
+}
+.floating-window[data-native-glass="active"] .theme-liquid-glass :where(
+  .status-capsule, .floating-dashboard-item, .floating-dashboard-chart,
+  .capsule-stats > span, .capsule-chart, .floating-dashboard-footer
+) {
+  backdrop-filter: blur(22px) saturate(148%) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(148%) !important;
+}
+.floating-window[data-native-glass="active"].liquid-tone-clear .theme-liquid-glass :where(
+  .status-capsule, .floating-dashboard-item, .floating-dashboard-chart,
+  .capsule-stats > span, .capsule-chart, .floating-dashboard-footer
+) {
+  border-color: rgba(255,255,255,.62) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.40), rgba(255,255,255,.08)),
+    rgba(255,255,255,.055) !important;
+  color: #17171a !important;
+}
+
+/* v0.7.8 透明白主题：完整覆盖旧版深色表面，避免白底白字与黑色侧边栏残留。 */
+.liquid-tone-clear .theme-liquid-glass {
+  color: var(--tm-ink) !important;
+  text-shadow: none;
+}
+.liquid-tone-clear .theme-liquid-glass.shell > aside {
+  border-right-color: rgba(23,23,26,.1) !important;
+  background:
+    radial-gradient(circle at var(--glass-pointer-x) var(--glass-pointer-y), color-mix(in srgb,var(--tm-accent) 8%,transparent), transparent 16rem),
+    linear-gradient(155deg, rgba(255,255,255,.84), rgba(255,255,255,.48) 56%, rgba(255,255,255,.7)),
+    rgba(247,248,250,.72) !important;
+  box-shadow: inset -1px 0 0 rgba(255,255,255,.74), .75rem 0 2.5rem rgba(45,52,66,.07) !important;
+}
+.liquid-tone-clear .theme-liquid-glass.shell > aside :where(.brand, nav, .privacy),
+.liquid-tone-clear[data-glass-background="custom"] .theme-liquid-glass.shell > aside :where(.brand, nav, .privacy) {
+  border-color: rgba(23,23,26,.1) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.78), rgba(255,255,255,.3)),
+    rgba(255,255,255,.34) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 .5rem 1.5rem rgba(45,52,66,.07) !important;
+  text-shadow: none !important;
+}
+.liquid-tone-clear .theme-liquid-glass.shell > aside :where(.brand > span, .brand > small, .tagline, .privacy) {
+  color: var(--tm-ink) !important;
+  text-shadow: none !important;
+}
+.liquid-tone-clear .theme-liquid-glass.shell > aside :where(.brand > small, .tagline, .privacy) {
+  color: var(--tm-muted) !important;
+}
+.liquid-tone-clear .theme-liquid-glass.shell > aside nav button,
+.liquid-tone-clear[data-glass-background="custom"] .theme-liquid-glass.shell > aside nav button {
+  border-color: transparent !important;
+  background: transparent !important;
+  color: var(--tm-muted) !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+.liquid-tone-clear .theme-liquid-glass.shell > aside nav button:not(:disabled):hover {
+  border-color: rgba(23,23,26,.08) !important;
+  background: rgba(255,255,255,.62) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: 0 .375rem 1rem rgba(45,52,66,.07) !important;
+}
+.liquid-tone-clear .theme-liquid-glass.shell > aside nav button.active,
+.liquid-tone-clear[data-glass-background="custom"] .theme-liquid-glass.shell > aside nav button.active {
+  border-color: color-mix(in srgb,var(--tm-accent) 24%,rgba(23,23,26,.1)) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.92), rgba(255,255,255,.54)),
+    color-mix(in srgb,var(--tm-accent) 7%,white) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: inset 0 1px 0 #fff, 0 .5rem 1.25rem rgba(45,52,66,.09) !important;
+}
+.liquid-tone-clear .theme-liquid-glass.shell > aside nav button.active::after {
+  background: var(--tm-accent);
+  box-shadow: 0 0 .65rem color-mix(in srgb,var(--tm-accent) 42%,transparent);
+}
+.liquid-tone-clear .theme-liquid-glass .dashboard-switcher > button.active,
+.liquid-tone-clear .theme-liquid-glass .dashboard-switcher .dashboard-tab.active {
+  border-color: color-mix(in srgb,var(--tm-accent) 26%,rgba(23,23,26,.12)) !important;
+  background:
+    linear-gradient(145deg,rgba(255,255,255,.94),rgba(255,255,255,.54)),
+    color-mix(in srgb,var(--tm-accent) 7%,white) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: inset 0 1px 0 #fff,0 .4rem 1rem rgba(45,52,66,.08) !important;
+}
+.liquid-tone-clear .theme-liquid-glass .dashboard-switcher .dashboard-tab.active .dashboard-tab-label {
+  color: var(--tm-ink) !important;
+}
+.liquid-tone-clear .theme-liquid-glass .dashboard-switcher .dashboard-tab.active .dashboard-remove {
+  color: var(--tm-muted) !important;
+}
+.liquid-tone-clear .theme-liquid-glass button:disabled {
+  color: var(--tm-muted) !important;
+  opacity: .62;
+}
+
+/* 白色玻璃上的文字层级统一使用深色正文和可访问的中灰辅助色。 */
+.liquid-tone-clear .theme-liquid-glass :where(
+  h1,h2,h3,h4,strong,b,dd,th,.section-title,.floating-dashboard-copy,
+  .monitor-status-brand,.provider-ranking,.dashboard-switcher,.chart-title
+) {
+  color: var(--tm-ink) !important;
+  text-shadow: none !important;
+}
+.liquid-tone-clear .theme-liquid-glass :where(
+  p,small,label,dt,caption,.hint,.muted,.subtitle,.eyebrow,
+  .floating-chart-heading span,.floating-dashboard-footer,.capsule-status
+) {
+  color: var(--tm-muted) !important;
+  text-shadow: none !important;
+}
+.liquid-tone-clear .theme-liquid-glass :where(input,select,textarea,code) {
+  color: var(--tm-ink) !important;
+  caret-color: var(--tm-ink);
+}
+.liquid-tone-clear .theme-liquid-glass :where(input,textarea)::placeholder {
+  color: color-mix(in srgb,var(--tm-muted) 78%,white) !important;
+  opacity: 1;
+}
+
+/* 旧仪表盘中曾以黑底白字强调的卡片，在透明白材质下改为同一套浅色玻璃。 */
+.liquid-tone-clear .theme-liquid-glass :where(
+  .all-summary,
+  .deepseek-metrics .balance-primary,
+  .model-kpis .token-primary,
+  .quota-source.reported,
+  .token-range button.active,
+  .monitor-status-bar.is-live
+) {
+  border: 1px solid rgba(23,23,26,.1) !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.84), rgba(255,255,255,.38)),
+    color-mix(in srgb,var(--tm-accent) 5%,rgba(255,255,255,.56)) !important;
+  color: var(--tm-ink) !important;
+  box-shadow: inset 0 1px 0 #fff, 0 .75rem 2rem rgba(45,52,66,.09) !important;
+}
+.liquid-tone-clear .theme-liquid-glass :where(
+  .all-summary,
+  .deepseek-metrics .balance-primary,
+  .model-kpis .token-primary,
+  .quota-source.reported,
+  .monitor-status-bar.is-live
+) :where(span,small,p,dt,em) {
+  color: var(--tm-muted) !important;
+}
+.liquid-tone-clear .theme-liquid-glass :where(
+  .all-summary,
+  .deepseek-metrics .balance-primary,
+  .model-kpis .token-primary,
+  .quota-source.reported,
+  .monitor-status-bar.is-live
+) :where(strong,b,dd) {
+  color: var(--tm-ink) !important;
+}
+.liquid-tone-clear .theme-liquid-glass :where(
+  .token-chart-summary > span,.cost-trend svg,.token-chart-empty,
+  .floating-chart-empty,.floating-chart-tabs,.capsule-stats > span,.capsule-chart
+) {
+  border-color: rgba(23,23,26,.08) !important;
+  background: rgba(255,255,255,.44) !important;
+}
+.liquid-tone-clear .theme-liquid-glass :where(
+  .token-stack > i,.metric-bar > i,.usage-bar > i,.floating-dashboard-bar > i,
+  .floating-chart-bars i,.capsule-chart i
+) {
+  box-shadow: inset 0 0 0 1px rgba(23,23,26,.12);
+}
+
+/* v0.7.8 悬浮窗：单层外壳、干净卡片和严格的 20px 裁切边界。 */
+.theme-liquid-glass.floating-dashboard-shell {
+  contain: layout paint style;
+  clip-path: inset(0 round 20px);
+  overflow: clip !important;
+  padding: 10px !important;
+  border-radius: 20px !important;
+}
+.theme-liquid-glass.floating-dashboard-shell::before {
+  z-index: 0;
+  border-radius: 20px;
+}
+.theme-liquid-glass.floating-dashboard-shell::after {
+  content: "";
+  position: absolute;
+  z-index: 8;
+  inset: 1px;
+  padding: 1px;
+  border-radius: 19px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle 9rem at var(--glass-pointer-x) var(--glass-pointer-y), rgba(255,255,255,.94), rgba(255,255,255,.12) 42%, transparent 70%),
+    linear-gradient(135deg, rgba(255,255,255,.58), transparent 32% 68%, rgba(255,255,255,.2));
+  -webkit-mask: linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: .72;
+}
+.theme-liquid-glass .floating-dashboard-header {
+  min-height: 40px !important;
+  margin: 0 0 7px !important;
+  padding: 2px 1px 7px !important;
+  border-bottom-color: color-mix(in srgb,var(--tm-ink) 9%,transparent) !important;
+}
+.theme-liquid-glass .floating-dashboard-header nav { gap: 4px; }
+.theme-liquid-glass .floating-brand b { color: var(--tm-ink) !important; }
+.theme-liquid-glass .floating-brand small {
+  color: var(--tm-muted) !important;
+  opacity: .92;
+  text-shadow: none !important;
+}
+.theme-liquid-glass .floating-dashboard-header nav button {
+  width: 30px;
+  height: 30px;
+  min-width: 30px !important;
+  min-height: 30px !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+}
+.theme-liquid-glass .floating-dashboard-list {
+  gap: 7px;
+  padding: 1px 2px 7px 1px;
+  scrollbar-gutter: auto;
+}
+.theme-liquid-glass .floating-dashboard-item,
+.theme-liquid-glass .status-capsule {
+  contain: paint;
+  overflow: clip;
+  border-radius: 15px !important;
+  box-shadow: inset 0 1px 0 color-mix(in srgb,var(--tm-bg) 72%,transparent), 0 5px 18px rgba(0,0,0,.07) !important;
+}
+.theme-liquid-glass .floating-dashboard-item {
+  min-height: 66px;
+  padding-right: 34px !important;
+}
+.theme-liquid-glass .floating-dashboard-summary {
+  min-height: 66px;
+  padding: 9px 60px 9px 10px !important;
+  border-radius: 14px !important;
+}
+.theme-liquid-glass .floating-dashboard-summary:hover { background: color-mix(in srgb,var(--tm-bg) 35%,transparent) !important; }
+.theme-liquid-glass .floating-dashboard-logo,
+.theme-liquid-glass .floating-dashboard-summary .provider-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+}
+.theme-liquid-glass .floating-dashboard-shell .mini-progress-ring {
+  right: 38px !important;
+  width: 44px;
+  height: 44px;
+}
+.theme-liquid-glass .floating-dashboard-expand {
+  right: 0;
+  width: 34px;
+  height: 66px;
+  border-left: 1px solid color-mix(in srgb,var(--tm-ink) 8%,transparent) !important;
+  border-radius: 0 14px 14px 0 !important;
+}
+.theme-liquid-glass .floating-dashboard-chart {
+  margin-right: -34px !important;
+  padding: 11px !important;
+  border-top-color: color-mix(in srgb,var(--tm-ink) 9%,transparent) !important;
+  border-radius: 0 0 14px 14px;
+  box-shadow: none !important;
+}
+.theme-liquid-glass .floating-dashboard-bars {
+  height: 84px;
+  padding: 11px 4px 0;
+  border-radius: 10px;
+  background: linear-gradient(to bottom,color-mix(in srgb,var(--tm-bg) 34%,transparent),transparent 72%);
+}
+.theme-liquid-glass .floating-chart-empty {
+  min-height: 72px;
+  padding: 10px;
+  border-radius: 11px;
+}
+.theme-liquid-glass .floating-dashboard-extras {
+  gap: 5px;
+  margin-top: 7px;
+}
+.theme-liquid-glass .floating-dashboard-extras > span {
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb,var(--tm-ink) 8%,transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb,var(--tm-bg) 42%,transparent);
+}
+.theme-liquid-glass .floating-dashboard-footer {
+  min-height: 25px;
+  padding: 6px 2px 0;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.theme-liquid-glass .floating-resize-handle {
+  right: 4px;
+  bottom: 4px;
+  /* 保留 18px 可拖拽热区，但默认不绘制会被误认为圆角残片的 L 形手柄。 */
+  opacity: 0 !important;
+  transition: opacity .18s ease;
+}
+.theme-liquid-glass .floating-resize-handle:is(:hover,:focus-visible) { opacity: .5 !important; }
+
+/* 胶囊模式只保留一个信息层；统计项用分隔线代替三张重复小卡。 */
+.theme-liquid-glass.floating-dashboard-shell.capsule-mode {
+  padding: 8px !important;
+  border-radius: 20px !important;
+}
+.theme-liquid-glass .status-capsule { border-radius: 16px !important; }
+.theme-liquid-glass .capsule-summary {
+  min-height: 62px;
+  padding: 8px 10px !important;
+  border-radius: 15px !important;
+}
+.theme-liquid-glass .capsule-detail { padding: 0 10px 10px; }
+.theme-liquid-glass .capsule-detail > label { padding: 8px 0; }
+.theme-liquid-glass .capsule-stats {
+  grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: 0;
+  overflow: clip;
+  border: 1px solid color-mix(in srgb,var(--tm-ink) 8%,transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb,var(--tm-bg) 40%,transparent);
+}
+.theme-liquid-glass .capsule-stats > span {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.theme-liquid-glass .capsule-stats > span + span {
+  border-left: 1px solid color-mix(in srgb,var(--tm-ink) 8%,transparent) !important;
+}
+.theme-liquid-glass .capsule-chart {
+  height: 64px;
+  margin-top: 7px;
+  padding: 8px 7px 5px;
+  overflow: visible;
+  border-radius: 11px;
+  box-shadow: none !important;
+}
+.theme-liquid-glass .capsule-status {
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-liquid-glass.floating-dashboard-shell::after { opacity: .46; }
+}

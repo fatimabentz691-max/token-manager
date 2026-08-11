@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { siHuawei, siMeta, siMistralai, siNvidia, siPerplexity, siX, type SimpleIcon } from 'simple-icons'
 import anthropic from '../assets/providers/official/anthropic.png?url'
 import baichuan from '../assets/providers/official/baichuan.ico?url'
 import deepseek from '../assets/providers/official/deepseek.png?url'
@@ -10,6 +11,7 @@ import kimi from '../assets/providers/official/kimi.ico?url'
 import mimo from '../assets/providers/official/mimo.png?url'
 import minimax from '../assets/providers/official/minimax.ico?url'
 import openai from '../assets/providers/official/openai.svg?url'
+import opencode from '../assets/providers/official/opencode.svg?url'
 import qianfan from '../assets/providers/official/qianfan.ico?url'
 import qwen from '../assets/providers/official/qwen.svg?url'
 import sensenova from '../assets/providers/official/sensenova.png?url'
@@ -28,7 +30,7 @@ const props = defineProps<{ name: string }>()
 
 /**
  * 只映射各平台官方网站或官方代码仓库公开的原始品牌资源。
- * 黑白效果由 CSS 显示层完成，不重新描摹、变形或裁切官方图形。
+ * 保留官网资源的原始彩色外观，不重新描摹、变形或裁切官方图形。
  */
 const logos: Record<string, LogoDefinition> = {
   '腾讯混元': { src: hunyuan },
@@ -45,17 +47,41 @@ const logos: Record<string, LogoDefinition> = {
   '商汤日日新': { src: sensenova },
   '百川智能': { src: baichuan },
   OpenAI: { src: openai },
+  'OpenCode Go': { src: opencode },
   Anthropic: { src: anthropic },
+  'Claude Code': { src: anthropic },
   'Google Gemini': { src: gemini },
+  Google: { src: gemini },
+  'Google DeepMind': { src: gemini },
   '小米 MiMo': { src: mimo, fit: 'wordmark' },
+  Xiaomi: { src: mimo, fit: 'wordmark' },
+  Alibaba: { src: qwen },
+  Qwen: { src: qwen },
+  ByteDance: { src: doubao },
+  Moonshot: { src: kimi },
+  'Moonshot AI': { src: kimi },
+  'Z.ai': { src: zhipu },
+  'Zhipu AI': { src: zhipu },
   '自定义 OpenAI 兼容': { src: openai },
 }
 
 const logo = computed(() => logos[props.name])
+const simpleIcons: Record<string, SimpleIcon> = {
+  xAI: siX,
+  Meta: siMeta,
+  'Mistral AI': siMistralai,
+  Mistral: siMistralai,
+  NVIDIA: siNvidia,
+  Nvidia: siNvidia,
+  华为: siHuawei,
+  Huawei: siHuawei,
+  Perplexity: siPerplexity,
+}
+const simpleIcon = computed(() => simpleIcons[props.name])
 </script>
 
 <template>
-  <span class="provider-mark" :title="`${name} · 官方品牌资源`">
+  <span class="provider-mark" :class="{ 'has-simple-icon': simpleIcon }" :title="`${name} · 官方品牌资源`">
     <img
       v-if="logo"
       :src="logo.src"
@@ -63,6 +89,13 @@ const logo = computed(() => logos[props.name])
       :class="{ 'is-wordmark': logo.fit === 'wordmark' }"
       draggable="false"
     >
+    <svg
+      v-else-if="simpleIcon"
+      class="provider-mark__svg"
+      viewBox="0 0 24 24"
+      role="img"
+      :aria-label="`${name} 官方商标`"
+    ><path :d="simpleIcon.path" :fill="`#${simpleIcon.hex}`" /></svg>
     <span v-else class="provider-mark__missing" aria-hidden="true">—</span>
   </span>
 </template>
@@ -74,11 +107,18 @@ const logo = computed(() => logos[props.name])
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #dedede;
+  border: 1px solid color-mix(in srgb, currentColor 10%, transparent);
   border-radius: 10px;
-  background: #fff;
+  background: color-mix(in srgb, var(--tm-surface, #fff) 88%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .75), 0 1px 2px rgba(0, 0, 0, .04);
   flex: 0 0 auto;
   overflow: hidden;
+  transition: transform var(--apple-duration-fast, 160ms) var(--apple-ease-out, ease-out),
+    box-shadow var(--apple-duration-fast, 160ms) var(--apple-ease-out, ease-out);
+}
+
+.provider-mark:active {
+  transform: scale(.96);
 }
 
 .provider-mark img {
@@ -86,13 +126,22 @@ const logo = computed(() => logos[props.name])
   height: 24px;
   object-fit: contain;
   object-position: center;
-  filter: grayscale(1) contrast(4);
+  filter: none;
   user-select: none;
 }
 
 .provider-mark img.is-wordmark {
   width: 28px;
   height: 15px;
+}
+
+.provider-mark.has-simple-icon {
+  background: #fff;
+}
+
+.provider-mark__svg {
+  width: 22px;
+  height: 22px;
 }
 
 .provider-mark__missing {

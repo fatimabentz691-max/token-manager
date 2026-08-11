@@ -1,8 +1,9 @@
 [package]
 name = "token-manager"
-version = "0.2.0"
+version = "0.11.0"
 description = "本地 AI Token 用量监控工具"
 edition = "2021"
+default-run = "token-manager"
 
 [lib]
 name = "token_manager_lib"
@@ -11,12 +12,18 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# 正式版必须启用 Tauri 自定义协议，页面从 EXE 内置资源加载，不能访问开发服务器 localhost。
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -25,11 +32,14 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 notify = "6"
 dirs = "5"
 axum = "0.7"
-tokio = { version = "1", features = ["net"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+futures-util = "0.3"
+regex = "1"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_Security_Cryptography", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 base64 = "0.22"
 chacha20poly1305 = "0.10"
 pbkdf2 = "0.12"
 sha2 = "0.10"
 rand = "0.8"
+rust_xlsxwriter = "0.96"

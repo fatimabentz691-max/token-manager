@@ -1,14 +1,20 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Token Manager",
-  "version": "0.2.0",
+  "version": "0.11.0",
   "identifier": "com.tokenlens.app",
-  "build": { "frontendDist": "../dist", "devUrl": "http://localhost:1420", "beforeDevCommand": "npm run dev", "beforeBuildCommand": "npm run build" },
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
   "app": {
     "windows": [
       {
         "label": "main",
         "title": "Token Manager",
+        "decorations": false,
         "center": true,
         "width": 1180,
         "height": 760,
@@ -19,10 +25,10 @@
         "label": "floating",
         "title": "Token Manager 悬浮窗",
         "url": "index.html",
-        "width": 420,
-        "height": 520,
+        "width": 430,
+        "height": 390,
         "minWidth": 300,
-        "minHeight": 140,
+        "minHeight": 96,
         "resizable": true,
         "decorations": false,
         "transparent": true,
@@ -32,7 +38,28 @@
         "visible": false
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      }
+    }
   },
-  "bundle": { "active": true, "targets": ["nsis"] }
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQyNkQ2NkRBRkU2MTJCMzMKUldReksySCsybVp0MHJFQTg3L256ZFdZTmJaRVJta0NsNFJENjNjYzVEZ3l5OFZLK1pQTUgwZG0K",
+      "endpoints": [
+        "https://token-manager-cloud.netlify.app/v1/update/stable"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
 }
