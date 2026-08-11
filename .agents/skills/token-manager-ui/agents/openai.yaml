@@ -1,0 +1,4 @@
+interface:
+  display_name: "Token Manager UI"
+  short_description: "Global UI rules, motion, materials, and QA for Token Manager"
+  default_prompt: "Use $token-manager-ui to review and implement this Token Manager UI change."
