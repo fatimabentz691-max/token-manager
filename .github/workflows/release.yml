@@ -21,6 +21,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: npm ci
+      - name: Build frontend
+        run: npm run build
       - name: Run tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
       - name: Build NSIS installer
