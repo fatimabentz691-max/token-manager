@@ -53,7 +53,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQyNkQ2NkRBRkU2MTJCMzMKUldReksySCsybVp0MHJFQTg3L256ZFdZTmJaRVJta0NsNFJENjNjYzVEZ3l5OFZLK1pQTUgwZG0K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhCMTY0NjMyQUZEQUZBNkYKUldSdit0cXZNa1lXaXlYckdQRnErdjFDeU91YmxYaFE1eWpNMlVFbzRLWWl6M0JQSVppTzFTUlQK",
       "endpoints": [
         "https://token-manager-cloud.netlify.app/v1/update/stable"
       ],
