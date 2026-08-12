@@ -23,15 +23,15 @@ const fallbackSiteContent = {
   privacy_note: "本地解析 · 密钥加密 · 不上传代码与日志",
 };
 const fallbackRelease = {
-  version: "0.11.0",
-  title: "可靠性核心版",
-  download_href: `${cloudBaseUrl}/v1/download/latest?source=website`,
-  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.0/TokenManager_0.11.0_x64-portable.exe",
-  file_name: "TokenManager_0.11.0_x64-setup.exe",
-  size_bytes: 10843070,
-  sha256: "E5E5031CF18D868DA41CE939750670BFA816AB111F23B8127368CAA33C141452",
-  published_at: "2026-08-11T00:00:00.000Z",
-  notes: "统一数据来源与可信度标注，新增 OpenCode SQLite/JSON 自动监控、同步健康中心和签名校验更新。",
+  version: "0.11.2",
+  title: "悬浮窗可靠性修复版",
+  download_href: publicUrl("downloads/TokenManager_0.11.2_x64-setup.exe"),
+  portable_href: publicUrl("downloads/TokenManager_0.11.2_x64-portable.exe"),
+  file_name: "TokenManager_0.11.2_x64-setup.exe",
+  size_bytes: 11100259,
+  sha256: "6D8FFF924FB0E6C6DAC6E42F948F7650474DE4369FED684F38956D00692B44F1",
+  published_at: "2026-08-12T00:00:00.000Z",
+  notes: "修复大版悬浮窗图表统计、Codex 合并、请求次数、提示框溢出和窗口裁切；新增胶囊、紧凑、完整三种显示密度。",
 };
 
 const versionNumber = (value) => String(value || "").split(".").reduce((total, part) => total * 1000 + (Number.parseInt(part, 10) || 0), 0);
@@ -53,7 +53,7 @@ export function App() {
       .then(response => response.ok ? response.json() : Promise.reject())
       .then(data => {
         if (versionNumber(data.version) >= versionNumber(fallbackRelease.version)) {
-          setRelease({ ...fallbackRelease, ...data, download_href: `${cloudBaseUrl}/v1/download/latest?source=website` });
+          setRelease({ ...fallbackRelease, ...data });
         }
       })
       .catch(() => {});
@@ -104,7 +104,7 @@ export function App() {
           <FeatureRow number="03 / LIVE MONITORING" title="代理启动不等于接入成功，状态会说清楚。" image={publicUrl("images/floating-window.png")} alt="Token Manager 分类悬浮窗" bullets={["OpenAI 与 Anthropic 兼容入口", "OpenCode API 代理与本地 JSON 双数据源", "请求结束后立即刷新，30 秒完整同步", "流式 usage、缓存命中与请求次数落库"]}>选择账户后可一键启动本机代理并接入常见调用工具；OpenCode 还可直接读取本地 JSON/JSONL 用量记录。界面会区分“已启动”“等待调用”“正在接收”，让不同模型的 Token 与余额变化有据可查。</FeatureRow>
           <FeatureRow reverse number="04 / LIQUID GLASS" title="真正可调的液态玻璃，不只是模糊背景。" image={publicUrl("images/settings-liquid-glass.png")} alt="Token Manager 液态玻璃主题和扭曲控制" bullets={["透明白与深色玻璃全局同步", "图片与最大 1GB 视频壁纸", "扭曲、边缘弯折、放大与色散可调", "十套图表配色、主题微光和动效开关"]}>WebGL 折射、CSS 安全降级与统一圆角材质覆盖主界面、侧边栏和悬浮窗。设置会实时预览并持久保存，重启后继续使用。</FeatureRow>
           <FeatureRow number="05 / DASHBOARDS" title="卡片随你排，简单模式和高级模式随时切换。" image={publicUrl("images/dashboard.png")} alt="Token Manager 自定义模型仪表盘" bullets={["每个账户与模型拥有独立仪表盘", "卡片拖拽排序并自动补齐空位", "Token、请求、缓存、消费与余额图表", "今日、7 天、30 天切换与悬停详情"]}>图表优先、余额下置，所有卡片可在限定网格内拖拽。主界面和悬浮窗共享自定义逻辑，并为无数据状态提供清晰占位。</FeatureRow>
-          <FeatureRow reverse number="06 / FLOATING WINDOW" title="桌面上也能看懂，不再是一块白色方框。" image={publicUrl("images/floating-window.png")} alt="带原生圆角裁切的 Token Manager 悬浮窗" bullets={["Win32 原生圆角区域裁切", "永久保持交互与标题区拖动", "全部模型、Codex、Claude Code 与自定义仪表盘", "可缩放、置顶、折叠后仍可恢复"]}>v0.11.0 保留稳定的双形态模块化布局，并让悬浮窗永久保持交互。透明边缘由系统窗口区域精确裁切，避免四角残留方框。</FeatureRow>
+          <FeatureRow reverse number="06 / FLOATING WINDOW" title="桌面上也能看懂，不再是一块白色方框。" image={publicUrl("images/floating-window.png")} alt="带原生圆角裁切的 Token Manager 悬浮窗" bullets={["胶囊、紧凑、完整三种显示密度", "Win32 原生圆角区域与八方向缩放", "全模型图表合并 Codex 独立数据链路", "悬停查看每日 Token、请求、缓存和消费"]}>v0.11.2 重做完整模式的数据图表和 Agent 明细，统一真实来源、更新时间与空状态。悬浮窗永久保持交互，尺寸按显示密度设置安全下限，避免图表被裁切或四角残留方框。</FeatureRow>
           <FeatureRow number="07 / PROMPT CENTER" title="Prompt 不再散落，保存、检索、复用都在本机。" image={publicUrl("images/prompt-center.png")} alt="Token Manager Prompt 中心" bullets={["分类、收藏、最近与常用视图", "名称、标签、内容和模型联合检索", "发送前本地质量检查与优化建议", "模板、历史和统计不上传云端"]}>Prompt Center 把高频开发提示词变成可以持续积累的本地资产。支持编辑、收藏、复制、分享，以及针对结构、约束与输出格式的质量检查。</FeatureRow>
           <FeatureRow reverse number="08 / ARENA & REPORTS" title="能力排名、六维雷达和账单报告放在一起。" image={publicUrl("images/arena.png")} alt="Token Manager Arena 排行榜与六维能力雷达" bullets={["今日前十模型与官方来源日期", "六维能力雷达和名次变化", "按模型分类累计消费", "周报、月报与独立 Excel 账单"]}>Arena 在联网时检查公开榜单，离线时回退到最近缓存并标注日期。报告中心按单个模型汇总 Token、请求、缓存和金额，可分别导出 Excel。</FeatureRow>
         </section>
