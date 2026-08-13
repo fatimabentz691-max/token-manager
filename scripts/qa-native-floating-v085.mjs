@@ -65,7 +65,7 @@ const floating = await connect(floatingTarget)
 await floating.call('Page.enable')
 await floating.call('Runtime.enable')
 await floating.call('Runtime.evaluate', {
-  expression: `localStorage.setItem('token-manager-floating-config',JSON.stringify({version:3,mode:'capsule',layout:'grid',enabled:['todayTokens','todayCalls'],order:['todayTokens','todayCalls'],mini:['todayTokens','todayCalls'],selectedKey:'__all__',expandedKeys:[],interaction:'interactive',alwaysOnTop:true,snapToEdges:false,sizes:{capsule:{width:360,height:152},compact:{width:380,height:380},full:{width:380,height:380}},position:null}));location.reload()`,
+  expression: `localStorage.setItem('token-manager-floating-config',JSON.stringify({version:3,mode:'capsule',layout:'grid',enabled:['todayTokens','todayCalls'],order:['todayTokens','todayCalls'],mini:['todayTokens','todayCalls'],selectedKey:'__all__',visibleKeys:['__all__','__codex__','__claude__'],expandedKeys:[],interaction:'interactive',alwaysOnTop:true,snapToEdges:false,sizes:{capsule:{width:360,height:152},compact:{width:440,height:540},full:{width:560,height:760}},position:null}));location.reload()`,
 })
 await sleep(3200)
 floating.socket.close()
@@ -75,11 +75,47 @@ const refreshedTarget = (await targets()).find(target => target.id === floatingT
 const refreshedFloating = await connect(refreshedTarget)
 await refreshedFloating.call('Page.enable')
 await refreshedFloating.call('Runtime.enable')
+const stabilitySamples = []
+for (let index = 0; index < 40; index++) {
+  const sample = await refreshedFloating.call('Runtime.evaluate', {
+    expression: `({screenX,screenY,innerWidth,innerHeight,mode:document.querySelector('.floating-shell')?.className||''})`,
+    returnByValue: true,
+  })
+  stabilitySamples.push(sample.result.value)
+  await sleep(100)
+}
+const distinctSizes = new Set(stabilitySamples.map(sample => `${sample.innerWidth}x${sample.innerHeight}`))
+const movingSamples = stabilitySamples.slice(1).filter((sample,index) => sample.screenX !== stabilitySamples[index].screenX || sample.screenY !== stabilitySamples[index].screenY)
+if (distinctSizes.size !== 1 || movingSamples.length) {
+  throw new Error(`悬浮窗存在尺寸/位置自激抖动：${JSON.stringify({ distinctSizes:[...distinctSizes], movingSamples:movingSamples.length, samples:stabilitySamples.slice(0,8) })}`)
+}
 const before = await refreshedFloating.call('Runtime.evaluate', {
-  expression: `(()=>{const root=document.querySelector('.floating-classic');const header=document.querySelector('.floating-classic__header');const rect=root?.getBoundingClientRect();const drag=header?.getBoundingClientRect();return{className:root?.className,width:Math.round(rect?.width||0),height:Math.round(rect?.height||0),radius:root?getComputedStyle(root).borderRadius:'',screenX,screenY,dragX:(drag?.left||0)+Math.min(210,(drag?.width||300)*.58),dragY:(drag?.top||0)+(drag?.height||40)/2,nativeGlass:document.documentElement.dataset.nativeGlass||''}})()`,
+  expression: `(()=>{const root=document.querySelector('.floating-shell');const header=document.querySelector('.floating-header');const rect=root?.getBoundingClientRect();const drag=header?.getBoundingClientRect();return{className:root?.className,width:Math.round(rect?.width||0),height:Math.round(rect?.height||0),radius:root?getComputedStyle(root).borderRadius:'',screenX,screenY,dragX:(drag?.left||0)+Math.min(210,(drag?.width||300)*.58),dragY:(drag?.top||0)+(drag?.height||40)/2,nativeGlass:document.documentElement.dataset.nativeGlass||''}})()`,
   returnByValue: true,
 })
 const state = before.result.value
+const modeChecks = []
+for (const control of [
+  { label: '展开悬浮窗', expected: 'mode-compact', size: '440x540' },
+  { label: '切换为大版悬浮窗', expected: 'mode-full', size: '560x760' },
+  { label: '折叠为胶囊', expected: 'mode-capsule', size: '360x152' },
+]) {
+  const clicked = await refreshedFloating.call('Runtime.evaluate', {
+    expression: `(()=>{const button=document.querySelector('button[aria-label="${control.label}"]');if(!button)return false;button.click();return true})()`,
+    returnByValue: true,
+  })
+  if (!clicked.result.value) throw new Error(`找不到悬浮窗模式按钮：${control.label}`)
+  await sleep(650)
+  const observed = await refreshedFloating.call('Runtime.evaluate', {
+    expression: `({innerWidth,innerHeight,className:document.querySelector('.floating-shell')?.className||''})`,
+    returnByValue: true,
+  })
+  const value = observed.result.value
+  modeChecks.push({ label: control.label, ...value })
+  if (!value.className.includes(control.expected) || `${value.innerWidth}x${value.innerHeight}` !== control.size) {
+    throw new Error(`悬浮窗模式切换失败：${JSON.stringify({ control, observed:value })}`)
+  }
+}
 await refreshedFloating.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: state.dragX, y: state.dragY })
 await refreshedFloating.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: state.dragX, y: state.dragY, button: 'left', buttons: 1, clickCount: 1 })
 await sleep(120)
@@ -93,6 +129,10 @@ await writeFile(outputPath, Buffer.from(shot.data, 'base64'))
 
 const result = {
   ...state,
+  stabilitySamples: stabilitySamples.length,
+  stableSize: [...distinctSizes][0],
+  spontaneousMoves: movingSamples.length,
+  modeChecks,
   moved: state.screenX !== after.result.value.screenX || state.screenY !== after.result.value.screenY,
   afterX: after.result.value.screenX,
   afterY: after.result.value.screenY,

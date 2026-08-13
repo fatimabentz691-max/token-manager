@@ -583,11 +583,12 @@ html.floating-window, body.floating-window { background: transparent !important;
 .floating-shell {
   padding: .875rem !important;
   border: 1px solid var(--apple-highlight) !important;
-  border-radius: var(--apple-radius-window) !important;
+  border-radius: 24px !important;
   background: color-mix(in srgb, var(--tm-bg, #fff) 88%, transparent) !important;
   box-shadow: var(--apple-shadow-2) !important;
   backdrop-filter: blur(34px) saturate(185%);
 }
+.floating-shell.mode-capsule { border-radius: 28px !important; }
 .floating-shell > header {
   min-height: 2.75rem;
   margin: 0 0 .625rem !important;
@@ -1292,3 +1293,32 @@ html:not(.motion-off) :where(.shell,.floating-shell,.prompt-modal-backdrop,.aren
 @media(max-width:900px) {
   .monitor-endpoints > div { grid-template-columns: 1fr; }
 }
+
+/* 全局动效令牌与旧说明的局部兼容层。新说明统一使用 SupplementalHelp。 */
+:root{--tm-motion-fast:160ms;--tm-motion-standard:220ms;--tm-motion-data:300ms;--tm-ease-out:cubic-bezier(.22,1,.36,1);--tm-overlay-surface:#fff;--tm-overlay-ink:#1d1d1f}
+.theme-dark{--tm-overlay-surface:#18181b;--tm-overlay-ink:#f5f5f7}
+.tm-local-help-anchor{position:relative}
+.tm-supplemental-description{display:block;max-height:5rem;overflow:hidden;visibility:visible;transform-origin:left top;transition:max-height var(--tm-motion-standard) var(--tm-ease-out),opacity var(--tm-motion-standard) var(--tm-ease-out),transform var(--tm-motion-standard) var(--tm-ease-out),visibility 0s linear 0s,margin var(--tm-motion-standard) var(--tm-ease-out)}
+html[data-description-visibility="hover"] .tm-local-help-anchor>.tm-supplemental-description{max-height:0!important;margin-top:0!important;margin-bottom:0!important;opacity:0!important;visibility:hidden;pointer-events:none;transform:scale(.985);transition-delay:0s,0s,0s,var(--tm-motion-standard),0s}
+html[data-description-visibility="hover"] .tm-local-help-anchor:where(:hover,:focus-within)>.tm-supplemental-description{max-height:5rem!important;margin-top:.25rem!important;opacity:1!important;visibility:visible;pointer-events:auto;transform:none;transition-delay:0s}
+html[data-description-visibility="hidden"] .tm-supplemental-description{display:none!important}
+html[data-description-visibility="always"] .tm-supplemental-description{max-height:5rem!important;opacity:1!important;visibility:visible}
+@media(prefers-reduced-motion:reduce){.tm-supplemental-description{transition:none}}
+
+/* v0.11.10：普通段落说明由显示偏好统一控制；错误、公告正文和输入内容不参与。 */
+html[data-description-visibility="hidden"] .shell p:not([role="alert"]):not(.error):not(.danger):not(.warning):not(.update-message),
+html[data-description-visibility="hidden"] .floating-shell p:not([role="alert"]):not(.error):not(.danger):not(.warning){display:none!important}
+html[data-description-visibility="hidden"] .remote-content-copy p,
+html[data-description-visibility="hidden"] .prompt-card p,
+html[data-description-visibility="hidden"] .prompt-item p,
+html[data-description-visibility="hidden"] .onboarding-flow p,
+html[data-description-visibility="hidden"] .update-notice p{display:block!important}
+html[data-description-visibility="hover"] .shell :where(header,section,article,div):has(>p:not([role="alert"]):not(.error):not(.danger):not(.warning))>p:not([role="alert"]):not(.error):not(.danger):not(.warning),
+html[data-description-visibility="hover"] .floating-shell :where(header,section,article,div):has(>p:not([role="alert"]):not(.error):not(.danger):not(.warning))>p:not([role="alert"]):not(.error):not(.danger):not(.warning){max-height:0;margin-top:0!important;margin-bottom:0!important;overflow:hidden;opacity:0;visibility:hidden;pointer-events:none;transform:scale(.985);transform-origin:left top;transition:max-height var(--tm-motion-standard) var(--tm-ease-out),opacity var(--tm-motion-standard) var(--tm-ease-out),transform var(--tm-motion-standard) var(--tm-ease-out),visibility 0s linear var(--tm-motion-standard)}
+html[data-description-visibility="hover"] .shell :where(header,section,article,div):has(>p):where(:hover,:focus-within)>p:not([role="alert"]):not(.error):not(.danger):not(.warning),
+html[data-description-visibility="hover"] .floating-shell :where(header,section,article,div):has(>p):where(:hover,:focus-within)>p:not([role="alert"]):not(.error):not(.danger):not(.warning){max-height:6rem;margin-top:.25rem!important;opacity:1;visibility:visible;pointer-events:auto;transform:none;transition-delay:0s}
+html[data-description-visibility="hover"] .remote-content-copy p,
+html[data-description-visibility="hover"] .prompt-card p,
+html[data-description-visibility="hover"] .prompt-item p,
+html[data-description-visibility="hover"] .onboarding-flow p,
+html[data-description-visibility="hover"] .update-notice p{max-height:none!important;margin:revert!important;opacity:1!important;visibility:visible!important;pointer-events:auto!important;transform:none!important}

@@ -189,7 +189,7 @@ html.liquid-tone-clear .theme-liquid-glass :where(
   .dashboard-context-heading > span,.section-title span,.chart-subtitle,
   .floating-focus-copy em,.floating-dashboard-footer time
 ) { color: var(--tm-muted) !important; opacity: 1 !important; text-shadow: none !important; }
-html.liquid-tone-clear .theme-liquid-glass :where(p,small,label,dt,dd,caption,em,time) { opacity: 1 !important; }
+html.liquid-tone-clear .theme-liquid-glass :where(p,small,label,dt,dd,caption,time) { opacity: 1 !important; }
 html.liquid-tone-clear .theme-liquid-glass.shell > aside nav button {
   color: var(--tm-ink) !important;
 }

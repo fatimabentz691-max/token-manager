@@ -1,6 +1,34 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { siHuawei, siMeta, siMistralai, siNvidia, siPerplexity, siX, type SimpleIcon } from 'simple-icons'
+import {
+  siAlibabacloud,
+  siBaidu,
+  siClaude,
+  siClaudecode,
+  siCline,
+  siCursor,
+  siGithubcopilot,
+  siGoogle,
+  siHuawei,
+  siKimi,
+  siMeta,
+  siMistralai,
+  siNvidia,
+  siPerplexity,
+  siQwen,
+  siX,
+  siXiaomi,
+  siZedindustries,
+  type SimpleIcon,
+} from 'simple-icons'
+import codex from '../assets/brands/codex-official-blue.png?url'
+import codebuddyAgent from '../assets/brands/agents/codebuddy.svg?url'
+import hermesAgent from '../assets/brands/agents/hermes-agent.png?url'
+import kiloCode from '../assets/brands/agents/kilo-code.png?url'
+import kiroAgent from '../assets/brands/agents/kiro.ico?url'
+import openclawAgent from '../assets/brands/agents/openclaw.png?url'
+import piAgent from '../assets/brands/agents/pi.svg?url'
+import traeAgent from '../assets/brands/agents/trae.png?url'
 import anthropic from '../assets/providers/official/anthropic.png?url'
 import baichuan from '../assets/providers/official/baichuan.ico?url'
 import deepseek from '../assets/providers/official/deepseek.png?url'
@@ -48,12 +76,16 @@ const logos: Record<string, LogoDefinition> = {
   '百川智能': { src: baichuan },
   OpenAI: { src: openai },
   'OpenCode Go': { src: opencode },
+  'OpenCode Go / Zen': { src: opencode },
+  'OpenCode CLI': { src: opencode },
   Anthropic: { src: anthropic },
   'Claude Code': { src: anthropic },
+  Codex: { src: codex },
   'Google Gemini': { src: gemini },
   Google: { src: gemini },
   'Google DeepMind': { src: gemini },
   '小米 MiMo': { src: mimo, fit: 'wordmark' },
+  'MiMo Code': { src: mimo, fit: 'wordmark' },
   Xiaomi: { src: mimo, fit: 'wordmark' },
   Alibaba: { src: qwen },
   Qwen: { src: qwen },
@@ -62,6 +94,16 @@ const logos: Record<string, LogoDefinition> = {
   'Moonshot AI': { src: kimi },
   'Z.ai': { src: zhipu },
   'Zhipu AI': { src: zhipu },
+  ZCode: { src: zhipu },
+  'Kilo Code': { src: kiloCode },
+  OpenClaw: { src: openclawAgent },
+  'Hermes Agent': { src: hermesAgent },
+  Pi: { src: piAgent },
+  'Pi Agent': { src: piAgent },
+  Kiro: { src: kiroAgent },
+  CodeBuddy: { src: codebuddyAgent },
+  'Trae Agent': { src: traeAgent },
+  'Trae IDE': { src: traeAgent },
   '自定义 OpenAI 兼容': { src: openai },
 }
 
@@ -76,6 +118,21 @@ const simpleIcons: Record<string, SimpleIcon> = {
   华为: siHuawei,
   Huawei: siHuawei,
   Perplexity: siPerplexity,
+  'Claude Code': siClaudecode,
+  Claude: siClaude,
+  Cursor: siCursor,
+  'GitHub Copilot': siGithubcopilot,
+  'Gemini CLI': siGoogle,
+  Cline: siCline,
+  'Kimi CLI': siKimi,
+  'Kimi CLI / Kimi Code': siKimi,
+  'Qwen CLI': siQwen,
+  Zed: siZedindustries,
+  'Antigravity': siGoogle,
+  'Grok Build': siX,
+  '通义灵码': siAlibabacloud,
+  '百度 Comate': siBaidu,
+  Xiaomi: siXiaomi,
 }
 const simpleIcon = computed(() => simpleIcons[props.name])
 </script>

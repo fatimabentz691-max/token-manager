@@ -34,7 +34,7 @@ const totalCalls = computed(() => rows.value.reduce((sum, item) => sum + item.ca
 <template>
   <section class="report-center">
     <header class="report-heading">
-      <div><span>本地账单中心</span><h2>按模型拆分累计消费</h2><p>每个模型独立汇总 Token、缓存、请求和人民币成本，可分别导出真正的 .xlsx 工作簿。</p></div>
+      <div><span>本地账单中心</span><h2>按模型拆分累计消费</h2><p class="tm-supplemental-description">每个模型独立汇总 Token、缓存、请求和人民币成本，可分别导出真正的 .xlsx 工作簿。</p></div>
       <button :disabled="!rows.length" @click="emit('exportAll')">导出全部模型 Excel</button>
     </header>
     <div class="report-summary">

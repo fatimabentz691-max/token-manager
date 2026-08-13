@@ -1,0 +1,22 @@
+{
+  "name": "token-manager-cloud-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node -e \"console.log('Token Manager Cloud static assets ready')\"",
+    "typecheck": "tsc --noEmit",
+    "dev": "netlify dev",
+    "deploy:preview": "netlify deploy",
+    "deploy:prod": "netlify deploy --prod"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.0.10"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^5.1.2",
+    "@types/node": "^26.1.1",
+    "netlify-cli": "^23.11.1",
+    "typescript": "^5.9.3"
+  }
+}

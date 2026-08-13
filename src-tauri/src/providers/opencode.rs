@@ -288,6 +288,14 @@ mod tests {
             path: temp.to_string_lossy().into_owned(),
             enabled: true,
             interval_seconds: 30,
+            agent_id: "opencode".into(),
+            collector_kind: "sqlite".into(),
+            paths: vec![temp.to_string_lossy().into_owned()],
+            capabilities: vec!["本地 SQLite".into()],
+            detected: true,
+            schema_version: 1,
+            path_mode: "manual".into(),
+            path_spec_ids: vec![],
         };
         let result = sync(&target, &source, true).unwrap();
         assert_eq!(result.imported, 1);
@@ -324,6 +332,14 @@ mod tests {
             path: temp.to_string_lossy().into_owned(),
             enabled: true,
             interval_seconds: 30,
+            agent_id: "opencode".into(),
+            collector_kind: "sqlite".into(),
+            paths: vec![temp.to_string_lossy().into_owned()],
+            capabilities: vec!["本地 SQLite".into()],
+            detected: true,
+            schema_version: 1,
+            path_mode: "manual".into(),
+            path_spec_ids: vec![],
         };
         let error = sync(&target, &source, true).unwrap_err();
         assert!(error.contains("暂未适配"));

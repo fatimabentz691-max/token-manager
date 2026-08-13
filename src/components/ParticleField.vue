@@ -6,11 +6,10 @@ import type { GlassQuality } from '../features/visualPreferences'
 const props = withDefaults(defineProps<{ quality?: GlassQuality }>(), { quality: 'high' })
 const canvas = ref<HTMLCanvasElement | null>(null)
 const { motionEnabled, particlesEnabled } = useMotionPreferences()
-let frame = 0
 let observer: ResizeObserver | undefined
 let rendererObserver: MutationObserver | undefined
 let particleColor = '#6E9CFF'
-type Point = { x:number; y:number; r:number; speed:number; alpha:number; depth:number }
+type Point = { x:number; y:number; r:number; alpha:number }
 let points: Point[] = []
 
 function shouldDraw() {
@@ -32,9 +31,7 @@ function resize() {
     x: Math.random() * node.width,
     y: Math.random() * node.height,
     r: (Math.random() * 1.3 + .45) * ratio,
-    speed: (Math.random() * .08 + .025) * ratio,
     alpha: Math.random() * .22 + .06,
-    depth: Math.random() * .7 + .3,
   }))
 }
 
@@ -44,24 +41,16 @@ function draw() {
   if (!node || !ctx) return
   ctx.clearRect(0, 0, node.width, node.height)
   for (const point of points) {
-    point.y -= point.speed
-    if (point.y < -4) { point.y = node.height + 4; point.x = Math.random() * node.width }
     ctx.globalAlpha = point.alpha
     ctx.fillStyle = particleColor
-    ctx.shadowColor = particleColor
-    ctx.shadowBlur = props.quality === 'high' ? point.depth * 7 : 0
     ctx.beginPath()
     ctx.arc(point.x, point.y, point.r, 0, Math.PI * 2)
     ctx.fill()
   }
   ctx.globalAlpha = 1
-  ctx.shadowBlur = 0
-  if (shouldDraw()) frame = requestAnimationFrame(draw)
 }
 
 function restart() {
-  cancelAnimationFrame(frame)
-  frame = 0
   const ctx = canvas.value?.getContext('2d')
   particleColor = getComputedStyle(document.documentElement).getPropertyValue('--tm-accent').trim() || '#6E9CFF'
   if (!shouldDraw()) {
@@ -77,16 +66,14 @@ watch([motionEnabled, particlesEnabled, () => props.quality], () => {
 })
 onMounted(() => {
   resize()
-  observer = new ResizeObserver(resize)
+  observer = new ResizeObserver(() => { resize(); restart() })
   if (canvas.value) observer.observe(canvas.value)
-  // WebGL 已接管环境细节时粒子画布在视觉上不可见，立即停止它自己的 rAF；
-  // 上下文丢失切回 CSS 安全模式后再自动恢复。
+  // 粒子仅绘制一次，不使用常驻动画；WebGL 接管或主题切换时再按需重绘。
   rendererObserver = new MutationObserver(restart)
   rendererObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
   restart()
 })
 onUnmounted(() => {
-  cancelAnimationFrame(frame)
   observer?.disconnect()
   rendererObserver?.disconnect()
 })

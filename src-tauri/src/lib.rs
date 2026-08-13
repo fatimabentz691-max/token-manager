@@ -29,7 +29,10 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::Command,
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
     time::Duration,
 };
 use tauri::{
@@ -250,6 +253,19 @@ pub struct ProxyEndpoint {
     pub anthropic_url: Option<String>,
     pub port: u16,
 }
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ProxyJob {
+    pub id: String,
+    pub status: String,
+    pub stage: String,
+    pub account_ids: Vec<String>,
+    pub agent_ids: Vec<String>,
+    pub endpoints: Vec<ProxyEndpoint>,
+    pub detail: String,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+}
 #[derive(Debug, Serialize, Clone)]
 pub struct ProxyTrafficEvent {
     pub account_id: Option<String>,
@@ -264,6 +280,9 @@ pub struct CcSwitchStatus {
     pub local_routing: bool,
     pub detail: String,
     pub checked_at: String,
+    pub coexistence: String,
+    pub conflicting_variables: Vec<String>,
+    pub safe_repair_available: bool,
 }
 #[derive(Debug, Serialize)]
 pub struct ClientIntegrationResult {
@@ -284,6 +303,31 @@ struct ClientIntegrationBackup {
     claude_settings_original: Option<String>,
     claude_settings_existed: bool,
     applied_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CcSwitchRepairResult {
+    pub repaired: Vec<String>,
+    pub skipped: Vec<String>,
+    pub detail: String,
+}
+
+fn is_token_manager_loopback(value: &str) -> bool {
+    let normalized = value.trim().trim_end_matches('/').to_ascii_lowercase();
+    normalized.starts_with("http://127.0.0.1:1876")
+        || normalized.starts_with("http://localhost:1876")
+}
+
+fn legacy_environment_conflicts() -> Vec<String> {
+    ["OPENAI_BASE_URL", "OPENAI_API_BASE", "ANTHROPIC_BASE_URL"]
+        .into_iter()
+        .filter(|name| {
+            query_user_environment(name)
+                .as_deref()
+                .is_some_and(is_token_manager_loopback)
+        })
+        .map(str::to_string)
+        .collect()
 }
 #[derive(Debug, Serialize, Deserialize)]
 struct BackupAccount {
@@ -353,6 +397,26 @@ pub struct RemoteContentItem {
     pub enabled: bool,
     pub created_at: String,
     pub updated_at: String,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PresenceReleaseSummary {
+    pub version: String,
+    pub title: Option<String>,
+    pub size_bytes: u64,
+    pub notes: String,
+    #[serde(default)]
+    pub highlights: Vec<String>,
+    #[serde(default)]
+    pub fixes: Vec<String>,
+    pub published_at: String,
+    pub download_url: String,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PresenceAckV2 {
+    pub ok: bool,
+    pub server_time: String,
+    pub heartbeat_interval: u64,
+    pub latest_release: Option<PresenceReleaseSummary>,
 }
 #[derive(Debug, Deserialize)]
 struct RemoteContentReply {
@@ -470,17 +534,41 @@ async fn verify_update_artifact(
 }
 pub(crate) struct AppDb(pub(crate) Mutex<Connection>);
 pub struct ProxyServerState(Mutex<HashMap<u16, String>>);
+pub struct ProxyJobCoordinator {
+    jobs: Mutex<HashMap<String, ProxyJob>>,
+    sequence: AtomicU64,
+}
+
+impl Default for ProxyJobCoordinator {
+    fn default() -> Self {
+        Self {
+            jobs: Mutex::new(HashMap::new()),
+            sequence: AtomicU64::new(1),
+        }
+    }
+}
 impl AppDb {
     fn open() -> Self {
         let path = data_path();
         let db = Connection::open(path).expect("无法打开本地数据库");
+        db.busy_timeout(std::time::Duration::from_secs(3))
+            .expect("无法配置数据库等待时间");
+        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+            .expect("无法启用数据库 WAL 模式");
         db.execute_batch("CREATE TABLE IF NOT EXISTS usage_events(id TEXT PRIMARY KEY,provider TEXT,model TEXT,at TEXT,input_tokens INTEGER,output_tokens INTEGER,cached_tokens INTEGER,cost REAL,task TEXT); CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,provider TEXT,name TEXT,secret_cipher BLOB,created_at TEXT); CREATE TABLE IF NOT EXISTS account_configs(id TEXT PRIMARY KEY,provider TEXT NOT NULL,name TEXT NOT NULL,base_url TEXT NOT NULL,secret_cipher BLOB NOT NULL,created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS codex_budget(id INTEGER PRIMARY KEY CHECK(id=1),five_hour_limit INTEGER NOT NULL,seven_day_limit INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS account_balances(account_id TEXT NOT NULL,provider TEXT NOT NULL,currency TEXT NOT NULL,total_balance REAL NOT NULL,granted_balance REAL NOT NULL,topped_up_balance REAL NOT NULL,is_available INTEGER NOT NULL,synced_at TEXT NOT NULL,PRIMARY KEY(account_id,currency)); CREATE TABLE IF NOT EXISTS balance_history(id INTEGER PRIMARY KEY AUTOINCREMENT,account_id TEXT NOT NULL,currency TEXT NOT NULL,total_balance REAL NOT NULL,at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS cloud_session(id INTEGER PRIMARY KEY CHECK(id=1),email TEXT NOT NULL,base_url TEXT NOT NULL,token_cipher BLOB NOT NULL,expires_at TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS app_identity(id INTEGER PRIMARY KEY CHECK(id=1),install_id TEXT NOT NULL,created_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_balance_history_account_at ON balance_history(account_id,at);").expect("无法初始化数据库");
-        reliability::migrate_database(&db).expect("无法升级本地数据库到 v11");
+        reliability::migrate_database(&db).expect("无法升级本地数据库到 v15");
         db.execute("INSERT OR IGNORE INTO codex_budget(id,five_hour_limit,seven_day_limit) VALUES(1,100000,1000000)",[]).expect("无法创建默认预算");
         Self(Mutex::new(db))
     }
 }
 fn data_path() -> PathBuf {
+    // 允许便携版与自动化验收使用隔离数据目录；默认仍使用当前 Windows 用户的 LocalAppData。
+    if let Some(root) = std::env::var_os("TOKEN_MANAGER_DATA_DIR").filter(|value| !value.is_empty())
+    {
+        let root = PathBuf::from(root);
+        fs::create_dir_all(&root).ok();
+        return root.join("token-manager.db");
+    }
     let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
     let root = base.join("Token Manager");
     fs::create_dir_all(&root).ok();
@@ -993,11 +1081,10 @@ fn start_proxy(
     {
         return Err("上游地址必须使用 HTTPS，或为本机地址".into());
     }
-    let mut running = state.0.lock().map_err(|_| "代理状态锁定")?;
+    let running = state.0.lock().map_err(|_| "代理状态锁定")?;
     if running.contains_key(&port) {
         return Err(format!("端口 {port} 的本地代理已在运行"));
     }
-    running.insert(port, account_id.clone().unwrap_or_else(|| "custom".into()));
     drop(running);
     let selected_account = account_id.clone();
     let (api_key, provider) = if let Some(id) = account_id {
@@ -1016,30 +1103,43 @@ fn start_proxy(
     let runtime = ProxyRuntime {
         upstream,
         provider,
-        account_id: selected_account,
+        account_id: selected_account.clone(),
         api_key,
         client: reqwest::Client::new(),
         app,
     };
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+        .map_err(|error| format!("端口 {port} 无法绑定：{error}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("端口 {port} 无法切换为异步模式：{error}"))?;
+    state.0.lock().map_err(|_| "代理状态锁定失败")?.insert(
+        port,
+        selected_account.clone().unwrap_or_else(|| "custom".into()),
+    );
     tauri::async_runtime::spawn(async move {
         let router = Router::new()
             .fallback(any(proxy_request))
             .with_state(runtime);
-        if let Ok(listener) =
-            tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await
-        {
+        if let Ok(listener) = tokio::net::TcpListener::from_std(listener) {
             let _ = axum::serve(listener, router).await;
         }
     });
+    if let Err(error) = wait_for_loopback_port(port, Duration::from_millis(1200)) {
+        if let Ok(mut running) = state.0.lock() {
+            running.remove(&port);
+        }
+        return Err(error);
+    }
     Ok(format!("http://127.0.0.1:{port}/v1"))
 }
-#[tauri::command]
-fn start_all_proxies(
-    state: State<ProxyServerState>,
-    db_state: State<AppDb>,
-    app: AppHandle,
+fn start_proxy_accounts_blocking(
+    app: &AppHandle,
+    account_ids: &[String],
 ) -> Result<Vec<ProxyEndpoint>, String> {
-    let accounts = {
+    let state = app.state::<ProxyServerState>();
+    let db_state = app.state::<AppDb>();
+    let mut accounts = {
         let db = db_state.0.lock().map_err(|_| "数据库锁定")?;
         let mut query=db.prepare("SELECT id,provider,name,base_url,secret_cipher FROM account_configs ORDER BY created_at ASC").map_err(|e|e.to_string())?;
         let rows = query
@@ -1055,18 +1155,37 @@ fn start_all_proxies(
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        rows
+        rows.into_iter().enumerate().collect::<Vec<_>>()
     };
+    if !account_ids.is_empty() {
+        accounts
+            .retain(|(_, (id, _, _, _, _))| account_ids.iter().any(|requested| requested == id));
+    }
     if accounts.is_empty() {
         return Err("请先在“账户与模型”中添加至少一个 API 账户".into());
     }
     let mut endpoints = Vec::new();
-    let mut running = state.0.lock().map_err(|_| "代理状态锁定")?;
-    for (index, (id, provider, name, upstream, cipher)) in accounts.into_iter().enumerate() {
+    for (index, (id, provider, name, upstream, cipher)) in accounts {
         let port = 18765u16.saturating_add(index as u16);
         let local_url = format!("http://127.0.0.1:{port}/v1");
-        if !running.contains_key(&port) {
+        let running_account = state
+            .0
+            .lock()
+            .map_err(|_| "代理状态锁定")?
+            .get(&port)
+            .cloned();
+        if let Some(running_account) = running_account.as_deref() {
+            if running_account != id {
+                return Err(format!("端口 {port} 已由其他账户占用，请先停止该代理"));
+            }
+            wait_for_loopback_port(port, Duration::from_millis(800))?;
+        } else {
             let key = unprotect_secret(&cipher)?;
+            let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+                .map_err(|error| format!("端口 {port} 无法绑定：{error}"))?;
+            listener
+                .set_nonblocking(true)
+                .map_err(|error| format!("端口 {port} 无法切换为异步模式：{error}"))?;
             let runtime = ProxyRuntime {
                 upstream,
                 provider: provider.clone(),
@@ -1079,13 +1198,21 @@ fn start_all_proxies(
                 let router = Router::new()
                     .fallback(any(proxy_request))
                     .with_state(runtime);
-                if let Ok(listener) =
-                    tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await
-                {
+                if let Ok(listener) = tokio::net::TcpListener::from_std(listener) {
                     let _ = axum::serve(listener, router).await;
                 }
             });
-            running.insert(port, id.clone());
+            state
+                .0
+                .lock()
+                .map_err(|_| "代理状态锁定")?
+                .insert(port, id.clone());
+            if let Err(error) = wait_for_loopback_port(port, Duration::from_millis(1200)) {
+                if let Ok(mut running) = state.0.lock() {
+                    running.remove(&port);
+                }
+                return Err(error);
+            }
         }
         endpoints.push(ProxyEndpoint {
             account_id: id,
@@ -1099,6 +1226,160 @@ fn start_all_proxies(
     }
     app.emit("proxy-state", endpoints.clone()).ok();
     Ok(endpoints)
+}
+
+/// 只有完成实际回环连接后，代理才可以对界面报告“已启动”。
+/// 检查过程不访问上游，也不会发送密钥或调用正文。
+fn wait_for_loopback_port(port: u16, timeout: Duration) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let address = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+    loop {
+        if std::net::TcpStream::connect_timeout(&address, Duration::from_millis(80)).is_ok() {
+            return Ok(());
+        }
+        if started.elapsed() >= timeout {
+            return Err(format!("代理端口 {port} 已绑定但回环健康检查失败"));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[tauri::command]
+async fn start_all_proxies(app: AppHandle) -> Result<Vec<ProxyEndpoint>, String> {
+    let task_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || start_proxy_accounts_blocking(&task_app, &[]))
+        .await
+        .map_err(|error| format!("代理启动工作线程异常：{error}"))?
+}
+
+fn update_proxy_job(app: &AppHandle, job: ProxyJob) {
+    if let Ok(mut jobs) = app.state::<ProxyJobCoordinator>().jobs.lock() {
+        jobs.insert(job.id.clone(), job.clone());
+    }
+    let _ = app.emit("proxy-job-updated", job);
+}
+
+#[tauri::command]
+fn start_proxy_group(
+    account_ids: Vec<String>,
+    agent_ids: Vec<String>,
+    app: AppHandle,
+) -> Result<ProxyJob, String> {
+    if account_ids.is_empty() {
+        return Err("请至少选择一个需要启动代理的账户".into());
+    }
+    let coordinator = app.state::<ProxyJobCoordinator>();
+    let sequence = coordinator.sequence.fetch_add(1, Ordering::Relaxed);
+    let job = ProxyJob {
+        id: format!("proxy-{}-{sequence}", Utc::now().timestamp_millis()),
+        status: "queued".into(),
+        stage: "decrypt".into(),
+        account_ids: account_ids.clone(),
+        agent_ids,
+        endpoints: vec![],
+        detail: "正在后台解密并校验所选账户".into(),
+        started_at: Utc::now().to_rfc3339(),
+        finished_at: None,
+    };
+    update_proxy_job(&app, job.clone());
+    let task_app = app.clone();
+    let job_id = job.id.clone();
+    let fallback_job = job.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut running = task_app
+            .state::<ProxyJobCoordinator>()
+            .jobs
+            .lock()
+            .ok()
+            .and_then(|jobs| jobs.get(&job_id).cloned())
+            .unwrap_or(fallback_job);
+        running.status = "running".into();
+        running.stage = "bind".into();
+        running.detail = "正在绑定本地端口并执行回环健康检查".into();
+        update_proxy_job(&task_app, running.clone());
+        let worker_app = task_app.clone();
+        let requested = account_ids.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            start_proxy_accounts_blocking(&worker_app, &requested)
+        })
+        .await;
+        match result {
+            Ok(Ok(endpoints)) => {
+                let mut warnings = Vec::new();
+                if let Some(endpoint_id) = endpoints
+                    .first()
+                    .map(|endpoint| endpoint.account_id.clone())
+                {
+                    for agent_id in running.agent_ids.clone() {
+                        running.stage = "configure".into();
+                        running.detail = format!("正在为 {agent_id} 原子写入专属连接配置");
+                        update_proxy_job(&task_app, running.clone());
+                        let integration_app = task_app.clone();
+                        let integration_endpoint = endpoint_id.clone();
+                        let integration_agent = agent_id.clone();
+                        match tauri::async_runtime::spawn_blocking(move || {
+                            connect_agent_proxy_blocking(
+                                integration_agent,
+                                integration_endpoint,
+                                integration_app,
+                            )
+                        })
+                        .await
+                        {
+                            Ok(Ok(_)) => {}
+                            Ok(Err(error)) => warnings.push(error),
+                            Err(error) => {
+                                warnings.push(format!("{agent_id} 配置线程异常：{error}"))
+                            }
+                        }
+                    }
+                }
+                running.status = "completed".into();
+                running.stage = if warnings.is_empty() {
+                    "ready"
+                } else {
+                    "ready_with_warnings"
+                }
+                .into();
+                running.detail = if warnings.is_empty() {
+                    format!(
+                        "{} 个账户代理已通过回环检查，所选 Agent 已接入",
+                        endpoints.len()
+                    )
+                } else {
+                    format!("代理已启动；{}", warnings.join("；"))
+                };
+                running.endpoints = endpoints;
+            }
+            Ok(Err(error)) => {
+                running.status = "error".into();
+                running.stage = "rollback".into();
+                running.detail = error;
+            }
+            Err(error) => {
+                running.status = "error".into();
+                running.stage = "rollback".into();
+                running.detail = format!("代理工作线程异常：{error}");
+            }
+        }
+        running.finished_at = Some(Utc::now().to_rfc3339());
+        update_proxy_job(&task_app, running);
+    });
+    Ok(job)
+}
+
+#[tauri::command]
+fn get_proxy_job(
+    job_id: String,
+    coordinator: State<ProxyJobCoordinator>,
+) -> Result<ProxyJob, String> {
+    coordinator
+        .jobs
+        .lock()
+        .map_err(|_| "代理任务状态锁定失败".to_string())?
+        .get(&job_id)
+        .cloned()
+        .ok_or_else(|| "未找到代理任务".into())
 }
 #[cfg(windows)]
 fn protect_secret(value: &str) -> Result<Vec<u8>, String> {
@@ -1555,13 +1836,24 @@ fn set_floating_window_mode(
     *state.radius.lock().map_err(|_| "悬浮圆角状态锁定失败")? = resolved_radius;
     *state.snap_to_edges.lock().map_err(|_| "贴边状态锁定失败")? = snap_to_edges;
     if let Some(window) = app.get_webview_window("floating") {
+        let (minimum_width, minimum_height) = match mode.as_str() {
+            "capsule" => (360.0, 152.0),
+            "full" => (500.0, 520.0),
+            _ => (400.0, 300.0),
+        };
+        window
+            .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+                minimum_width,
+                minimum_height,
+            ))))
+            .map_err(|error| error.to_string())?;
         // 形态和物理窗口尺寸由同一个主进程命令原子更新，避免只缩小 Vue 内容、
         // 却留下旧窗口透明矩形区域所形成的黑框或空白方框。
         if let (Some(width), Some(height)) = (width, height) {
             window
                 .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                    width.clamp(300.0, 960.0),
-                    height.clamp(96.0, 1000.0),
+                    width.clamp(minimum_width, 960.0),
+                    height.clamp(minimum_height, 1000.0),
                 )))
                 .map_err(|error| error.to_string())?;
         }
@@ -1571,6 +1863,17 @@ fn set_floating_window_mode(
         #[cfg(windows)]
         apply_floating_rounded_region(&window, resolved_radius)?;
     }
+    app.emit(
+        "floating-window-mode-applied",
+        serde_json::json!({
+            "mode": mode,
+            "width": width,
+            "height": height,
+            "radius": resolved_radius,
+            "alwaysOnTop": always_on_top,
+        }),
+    )
+    .ok();
     Ok(())
 }
 
@@ -1757,8 +2060,7 @@ fn providers() -> Vec<AdapterCapability> {
 }
 
 /// 只检查 CC Switch 是否安装、进程是否存在，以及常用本地路由端口是否监听；不读取其密钥或供应商配置。
-#[tauri::command]
-fn cc_switch_status() -> CcSwitchStatus {
+fn cc_switch_status_blocking(app: Option<&AppHandle>) -> CcSwitchStatus {
     let home = dirs::home_dir().unwrap_or_default();
     let local = dirs::data_local_dir().unwrap_or_default();
     let installed = [
@@ -1798,33 +2100,57 @@ fn cc_switch_status() -> CcSwitchStatus {
         "未检测到 CC Switch"
     }
     .to_string();
+    let conflicting_variables = legacy_environment_conflicts();
+    let backup_exists = app
+        .and_then(|handle| client_integration_backup_path(handle).ok())
+        .is_some_and(|path| path.exists());
+    let coexistence = if conflicting_variables.is_empty() {
+        if running {
+            "monitor_only"
+        } else {
+            "clear"
+        }
+    } else if backup_exists {
+        "repair_available"
+    } else {
+        "review_required"
+    };
     CcSwitchStatus {
         installed: installed || running,
         running,
         local_routing,
         detail,
         checked_at: Utc::now().to_rfc3339(),
+        coexistence: coexistence.into(),
+        safe_repair_available: backup_exists && !conflicting_variables.is_empty(),
+        conflicting_variables,
     }
+}
+
+#[tauri::command]
+async fn cc_switch_status(app: AppHandle) -> CcSwitchStatus {
+    tauri::async_runtime::spawn_blocking(move || cc_switch_status_blocking(Some(&app)))
+        .await
+        .unwrap_or_else(|_| CcSwitchStatus {
+            installed: false,
+            running: false,
+            local_routing: false,
+            detail: "CC Switch 后台检测线程异常".into(),
+            checked_at: Utc::now().to_rfc3339(),
+            coexistence: "unknown".into(),
+            conflicting_variables: Vec::new(),
+            safe_repair_available: false,
+        })
 }
 
 #[cfg(windows)]
 fn query_user_environment(name: &str) -> Option<String> {
-    let output = Command::new("reg")
-        .creation_flags(0x0800_0000)
-        .args(["query", "HKCU\\Environment", "/v", name])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines().find_map(|line| {
-        let columns = line.split_whitespace().collect::<Vec<_>>();
-        let index = columns
-            .iter()
-            .position(|value| value.eq_ignore_ascii_case(name))?;
-        (columns.len() > index + 2).then(|| columns[index + 2..].join(" "))
-    })
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Environment")
+        .ok()?
+        .get_value::<String, _>(name)
+        .ok()
 }
 
 #[cfg(not(windows))]
@@ -1834,28 +2160,21 @@ fn query_user_environment(_name: &str) -> Option<String> {
 
 #[cfg(windows)]
 fn write_user_environment(name: &str, value: Option<&str>) -> Result<(), String> {
-    let mut command = Command::new("reg");
-    command.creation_flags(0x0800_0000);
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (environment, _) = hkcu
+        .create_subkey("Environment")
+        .map_err(|error| format!("无法打开当前用户环境变量：{error}"))?;
     if let Some(value) = value {
-        command.args([
-            "add",
-            "HKCU\\Environment",
-            "/v",
-            name,
-            "/t",
-            "REG_SZ",
-            "/d",
-            value,
-            "/f",
-        ]);
+        environment
+            .set_value(name, &value)
+            .map_err(|error| format!("无法写入 {name}：{error}"))
     } else {
-        command.args(["delete", "HKCU\\Environment", "/v", name, "/f"]);
-    }
-    let output = command.output().map_err(|error| error.to_string())?;
-    if output.status.success() || value.is_none() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        match environment.delete_value(name) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(format!("无法删除 {name}：{error}")),
+        }
     }
 }
 
@@ -1875,36 +2194,126 @@ fn client_integration_backup_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// 自动把常见 OpenAI 兼容工具与 Claude Code 指向本机代理。
 /// 修改前保存原始配置，只写 Base URL 和 Claude Code 的本地占位令牌，不读取用户密钥。
+fn auto_connect_client_blocking(
+    _local_url: String,
+    _anthropic_url: Option<String>,
+    _account_name: String,
+    _app: AppHandle,
+) -> Result<ClientIntegrationResult, String> {
+    Err("旧版全局自动接入已停用，避免与 CC Switch 冲突。请选择具体 Agent 接入；不支持安全写入的 Agent 请复制本机地址手动配置。".into())
+}
+
 #[tauri::command]
-fn auto_connect_client(
+fn repair_cc_switch_conflicts(app: AppHandle) -> Result<CcSwitchRepairResult, String> {
+    let backup_path = client_integration_backup_path(&app)?;
+    if !backup_path.exists() {
+        return Err(
+            "未找到 Token Manager 的原值备份。为避免误删用户配置，只能展示冲突项，不能自动修复。"
+                .into(),
+        );
+    }
+    let backup: ClientIntegrationBackup =
+        serde_json::from_slice(&fs::read(&backup_path).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    let candidates = [
+        ("OPENAI_BASE_URL", backup.openai_base_url.as_deref()),
+        ("OPENAI_API_BASE", backup.openai_api_base.as_deref()),
+        ("ANTHROPIC_BASE_URL", backup.anthropic_base_url.as_deref()),
+    ];
+    let mut repaired = Vec::new();
+    let mut skipped = Vec::new();
+    for (name, original) in candidates {
+        match query_user_environment(name) {
+            Some(current) if is_token_manager_loopback(&current) => {
+                write_user_environment(name, original)?;
+                repaired.push(name.into());
+            }
+            Some(_) => skipped.push(format!("{name}：当前值已被用户或其他工具修改")),
+            None => skipped.push(format!("{name}：当前不存在")),
+        }
+    }
+    Ok(CcSwitchRepairResult {
+        detail: if repaired.is_empty() {
+            "没有可安全恢复的 Token Manager 旧变量"
+        } else {
+            "已恢复 Token Manager 有明确所有权的旧变量；请重新启动 CC Switch 和调用工具"
+        }
+        .into(),
+        repaired,
+        skipped,
+    })
+}
+
+#[tauri::command]
+async fn auto_connect_client(
     local_url: String,
     anthropic_url: Option<String>,
     account_name: String,
     app: AppHandle,
 ) -> Result<ClientIntegrationResult, String> {
-    if !local_url.starts_with("http://127.0.0.1:") {
-        return Err("自动接入仅允许使用 Token Manager 的 127.0.0.1 本机地址".into());
-    }
-    if let Some(url) = anthropic_url.as_deref() {
-        if !url.starts_with("http://127.0.0.1:") {
-            return Err("Claude Code 自动接入地址不是安全的本机地址".into());
-        }
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        auto_connect_client_blocking(local_url, anthropic_url, account_name, app)
+    })
+    .await
+    .map_err(|error| format!("自动接入工作线程异常：{error}"))?
+}
 
+#[cfg(windows)]
+fn atomic_replace_file(temporary: &Path, target: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+    if !target.exists() {
+        return fs::rename(temporary, target).map_err(|error| error.to_string());
+    }
+    let mut target_wide = target
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let mut temporary_wide = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let replaced = unsafe {
+        ReplaceFileW(
+            target_wide.as_mut_ptr(),
+            temporary_wide.as_mut_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if replaced == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn atomic_replace_file(temporary: &Path, target: &Path) -> Result<(), String> {
+    fs::rename(temporary, target).map_err(|error| error.to_string())
+}
+
+fn connect_claude_code_blocking(
+    anthropic_url: String,
+    account_name: String,
+    app: AppHandle,
+) -> Result<ClientIntegrationResult, String> {
     let backup_path = client_integration_backup_path(&app)?;
+    let claude_path = dirs::home_dir()
+        .ok_or("无法定位当前用户目录")?
+        .join(".claude")
+        .join("settings.json");
     if !backup_path.exists() {
-        let claude_path = dirs::home_dir().map(|home| home.join(".claude").join("settings.json"));
         let backup = ClientIntegrationBackup {
             openai_base_url: query_user_environment("OPENAI_BASE_URL"),
             openai_api_base: query_user_environment("OPENAI_API_BASE"),
             anthropic_base_url: query_user_environment("ANTHROPIC_BASE_URL"),
-            claude_settings_path: claude_path
-                .as_ref()
-                .map(|path| path.to_string_lossy().to_string()),
-            claude_settings_original: claude_path
-                .as_ref()
-                .and_then(|path| fs::read_to_string(path).ok()),
-            claude_settings_existed: claude_path.as_ref().is_some_and(|path| path.exists()),
+            claude_settings_path: Some(claude_path.to_string_lossy().into_owned()),
+            claude_settings_original: fs::read_to_string(&claude_path).ok(),
+            claude_settings_existed: claude_path.exists(),
             applied_at: Utc::now().to_rfc3339(),
         };
         fs::write(
@@ -1913,62 +2322,104 @@ fn auto_connect_client(
         )
         .map_err(|error| error.to_string())?;
     }
-
-    write_user_environment("OPENAI_BASE_URL", Some(&local_url))?;
-    write_user_environment("OPENAI_API_BASE", Some(&local_url))?;
-    let mut changed = vec![
-        "Windows OPENAI_BASE_URL".to_string(),
-        "Windows OPENAI_API_BASE".to_string(),
-    ];
-
-    if let Some(anthropic_url) = anthropic_url.as_deref() {
-        write_user_environment("ANTHROPIC_BASE_URL", Some(anthropic_url))?;
-        let claude_path = dirs::home_dir()
-            .ok_or("无法定位当前用户目录")?
-            .join(".claude")
-            .join("settings.json");
-        if let Some(parent) = claude_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        let mut settings = fs::read_to_string(&claude_path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-            .unwrap_or_else(|| serde_json::json!({}));
-        if !settings.is_object() {
-            settings = serde_json::json!({});
-        }
-        let object = settings.as_object_mut().ok_or("Claude Code 设置格式无效")?;
-        let env = object.entry("env").or_insert_with(|| serde_json::json!({}));
-        if !env.is_object() {
-            *env = serde_json::json!({});
-        }
-        if let Some(env) = env.as_object_mut() {
-            env.insert(
-                "ANTHROPIC_BASE_URL".into(),
-                serde_json::Value::String(anthropic_url.to_string()),
-            );
-            env.entry("ANTHROPIC_AUTH_TOKEN")
-                .or_insert_with(|| serde_json::Value::String("token-manager-local".into()));
-        }
-        fs::write(
-            &claude_path,
-            serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        changed.push("Claude Code ~/.claude/settings.json".into());
-        changed.push("Windows ANTHROPIC_BASE_URL".into());
+    if let Some(parent) = claude_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-
+    let mut settings = fs::read_to_string(&claude_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !settings.is_object() {
+        return Err("Claude Code settings.json 不是对象结构，已停止写入".into());
+    }
+    let object = settings.as_object_mut().ok_or("Claude Code 设置格式无效")?;
+    let env = object.entry("env").or_insert_with(|| serde_json::json!({}));
+    if !env.is_object() {
+        return Err("Claude Code settings.json 的 env 字段格式未知，已停止写入".into());
+    }
+    let env = env.as_object_mut().ok_or("Claude Code 环境设置格式无效")?;
+    env.insert(
+        "ANTHROPIC_BASE_URL".into(),
+        serde_json::Value::String(anthropic_url.clone()),
+    );
+    env.entry("ANTHROPIC_AUTH_TOKEN")
+        .or_insert_with(|| serde_json::Value::String("token-manager-local".into()));
+    let temporary = claude_path.with_extension("json.token-manager.tmp");
+    fs::write(
+        &temporary,
+        serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    atomic_replace_file(&temporary, &claude_path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        format!("Claude Code 配置原子替换失败：{error}")
+    })?;
     Ok(ClientIntegrationResult {
         connected: true,
         account_name,
-        openai_url: local_url,
-        anthropic_url,
-        changed,
+        openai_url: String::new(),
+        anthropic_url: Some(anthropic_url),
+        changed: vec!["Claude Code ~/.claude/settings.json".into()],
         restart_required: true,
-        detail: "自动接入已完成；请重启正在运行的 Code、Cursor 或 Claude Code 后发起一次请求。"
-            .into(),
+        detail:
+            "仅已接入 Claude Code；没有改写其他 Agent 的全局连接环境。重启 Claude Code 后生效。"
+                .into(),
     })
+}
+
+#[tauri::command]
+async fn connect_agent_proxy(
+    agent_id: String,
+    endpoint_id: String,
+    app: AppHandle,
+) -> Result<ClientIntegrationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        connect_agent_proxy_blocking(agent_id, endpoint_id, app)
+    })
+    .await
+    .map_err(|error| format!("Agent 接入工作线程异常：{error}"))?
+}
+
+fn connect_agent_proxy_blocking(
+    agent_id: String,
+    endpoint_id: String,
+    task_app: AppHandle,
+) -> Result<ClientIntegrationResult, String> {
+    let port = task_app
+        .state::<ProxyServerState>()
+        .0
+        .lock()
+        .map_err(|_| "代理状态锁定失败")?
+        .iter()
+        .find_map(|(port, account_id)| (account_id == &endpoint_id).then_some(*port))
+        .ok_or_else(|| "所选账户代理尚未启动".to_string())?;
+    let account_name = {
+        let db_state = task_app.state::<AppDb>();
+        let db = db_state.0.lock().map_err(|_| "数据库锁定失败")?;
+        db.query_row(
+            "SELECT name FROM account_configs WHERE id=?1",
+            [&endpoint_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|error| error.to_string())?
+    };
+    match agent_id.as_str() {
+            "claude-code" => connect_claude_code_blocking(
+                format!("http://127.0.0.1:{port}/anthropic"),
+                account_name,
+                task_app,
+            ),
+            _ => Err(format!(
+                "{agent_id} 当前没有经过验证的原子配置写入规范；代理已启动，请复制本机 Base URL 手动接入"
+            )),
+        }
+}
+
+#[tauri::command]
+async fn disconnect_agent_proxy(_agent_id: String, app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || restore_client_connection(app))
+        .await
+        .map_err(|error| format!("Agent 恢复工作线程异常：{error}"))?
 }
 
 #[tauri::command]
@@ -1980,9 +2431,18 @@ fn restore_client_connection(app: AppHandle) -> Result<String, String> {
     let backup: ClientIntegrationBackup =
         serde_json::from_slice(&fs::read(&backup_path).map_err(|error| error.to_string())?)
             .map_err(|error| error.to_string())?;
-    write_user_environment("OPENAI_BASE_URL", backup.openai_base_url.as_deref())?;
-    write_user_environment("OPENAI_API_BASE", backup.openai_api_base.as_deref())?;
-    write_user_environment("ANTHROPIC_BASE_URL", backup.anthropic_base_url.as_deref())?;
+    for (name, original) in [
+        ("OPENAI_BASE_URL", backup.openai_base_url.as_deref()),
+        ("OPENAI_API_BASE", backup.openai_api_base.as_deref()),
+        ("ANTHROPIC_BASE_URL", backup.anthropic_base_url.as_deref()),
+    ] {
+        if query_user_environment(name)
+            .as_deref()
+            .is_some_and(is_token_manager_loopback)
+        {
+            write_user_environment(name, original)?;
+        }
+    }
     if let Some(path) = backup.claude_settings_path.as_deref() {
         let path = PathBuf::from(path);
         if let Some(original) = backup.claude_settings_original {
@@ -2218,26 +2678,39 @@ fn validate_cloud_base(value: &str) -> Result<String, String> {
         Err("后端地址必须使用 HTTPS，或为本机开发地址".into())
     }
 }
-fn install_identity(state: &State<'_, AppDb>) -> Result<String, String> {
-    let db = state.0.lock().map_err(|_| "数据库锁定")?;
-    if let Ok(value) = db.query_row(
-        "SELECT install_id FROM app_identity WHERE id=1",
-        [],
-        |row| row.get::<_, String>(0),
-    ) {
-        return Ok(value);
-    }
+fn new_install_identity() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
-    let value = bytes
+    bytes
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    db.execute(
-        "INSERT OR REPLACE INTO app_identity(id,install_id,created_at) VALUES(1,?1,?2)",
-        params![value, Utc::now().to_rfc3339()],
-    )
-    .map_err(|error| error.to_string())?;
+        .collect::<String>()
+}
+#[cfg(windows)]
+fn install_identity(_state: &State<'_, AppDb>) -> Result<String, String> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (key, _) = hkcu
+        .create_subkey("Software\\Token Manager")
+        .map_err(|error| format!("无法读取匿名安装标识：{error}"))?;
+    if let Ok(value) = key.get_value::<String, _>("InstallIdV2") {
+        if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Ok(value.to_ascii_lowercase());
+        }
+    }
+    let value = new_install_identity();
+    key.set_value("InstallIdV2", &value)
+        .map_err(|error| format!("无法保存匿名安装标识：{error}"))?;
+    Ok(value)
+}
+#[cfg(not(windows))]
+fn install_identity(state: &State<'_, AppDb>) -> Result<String, String> {
+    let db = state.0.lock().map_err(|_| "数据库锁定")?;
+    if let Ok(value) = db.query_row("SELECT install_id FROM app_identity WHERE id=1", [], |row| row.get::<_, String>(0)) {
+        return Ok(value);
+    }
+    let value = new_install_identity();
+    db.execute("INSERT OR REPLACE INTO app_identity(id,install_id,created_at) VALUES(1,?1,?2)", params![value, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
     Ok(value)
 }
 fn save_cloud_auth(
@@ -2517,8 +2990,11 @@ async fn cloud_app_presence(
     base_url: String,
     app_version: String,
     event: String,
+    session_id: String,
+    event_seq: u64,
+    sent_at: String,
     state: State<'_, AppDb>,
-) -> Result<(), String> {
+) -> Result<PresenceAckV2, String> {
     let base = validate_cloud_base(&base_url)?;
     let event = if event == "launch" {
         "launch"
@@ -2529,15 +3005,13 @@ async fn cloud_app_presence(
     let response = reqwest::Client::new()
         .post(format!("{base}/v1/app/heartbeat"))
         .timeout(Duration::from_secs(8))
-        .json(&serde_json::json!({"install_id":install_id,"app_version":app_version,"event":event}))
+        .json(&serde_json::json!({"install_id":install_id,"app_version":app_version,"event":event,"session_id":session_id,"event_seq":event_seq,"sent_at":sent_at}))
         .send()
         .await
         .map_err(|e| format!("匿名使用统计暂不可用：{e}"))?;
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        Err(format!("匿名使用统计返回 {}", response.status()))
-    }
+    let status = response.status();
+    if !status.is_success() { return Err(format!("匿名使用统计返回 {status}")); }
+    response.json::<PresenceAckV2>().await.map_err(|error| format!("匿名使用统计回包无效：{error}"))
 }
 #[tauri::command]
 fn save_usage(event: UsageEvent, state: State<AppDb>) -> Result<(), String> {
@@ -2757,8 +3231,7 @@ fn parse_codex_line(line: String) -> Option<UsageEvent> {
     })
 }
 /// 只读访问 Codex 自己的状态库；仅提取计数及更新时间，绝不读取提示词或会话正文。
-#[tauri::command]
-fn codex_snapshot() -> Result<CodexSnapshot, String> {
+fn codex_snapshot_blocking() -> Result<CodexSnapshot, String> {
     let path = dirs::home_dir()
         .ok_or("无法定位用户目录")?
         .join(".codex")
@@ -2778,6 +3251,13 @@ fn codex_snapshot() -> Result<CodexSnapshot, String> {
         updated_at_ms: updated,
         source: "Codex 本地状态库（threads.tokens_used）".into(),
     })
+}
+
+#[tauri::command]
+async fn codex_snapshot() -> Result<CodexSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(codex_snapshot_blocking)
+        .await
+        .map_err(|error| format!("Codex 状态读取线程异常：{error}"))?
 }
 fn current_budget(state: &State<AppDb>) -> Result<CodexBudget, String> {
     let db = state.0.lock().map_err(|_| "数据库锁定")?;
@@ -2907,8 +3387,7 @@ fn parse_codex_quota_line(line: &str) -> Option<CodexQuotaSnapshot> {
     })
 }
 /// 读取 Codex 已落盘的额度状态。仅处理百分比、窗口和重置时间，不读取提示词、回复正文或认证文件。
-#[tauri::command]
-fn codex_quota_snapshot() -> Result<CodexQuotaSnapshot, String> {
+fn codex_quota_snapshot_blocking() -> Result<CodexQuotaSnapshot, String> {
     let sessions = dirs::home_dir()
         .ok_or("无法定位用户目录")?
         .join(".codex")
@@ -2931,9 +3410,15 @@ fn codex_quota_snapshot() -> Result<CodexQuotaSnapshot, String> {
     }
     Err("Codex 尚未写入可读取的额度状态；完成一次 Codex 对话后再刷新".into())
 }
-/// 解析 Claude Code 本地 JSONL 的 usage 元数据，不读取或保存会话正文。
+
 #[tauri::command]
-fn claude_code_usage_series(days: Option<u32>) -> Result<Vec<UsageEvent>, String> {
+async fn codex_quota_snapshot() -> Result<CodexQuotaSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(codex_quota_snapshot_blocking)
+        .await
+        .map_err(|error| format!("Codex 额度读取线程异常：{error}"))?
+}
+/// 解析 Claude Code 本地 JSONL 的 usage 元数据，不读取或保存会话正文。
+fn claude_code_usage_series_blocking(days: Option<u32>) -> Result<Vec<UsageEvent>, String> {
     let projects = dirs::home_dir()
         .ok_or("无法定位用户目录")?
         .join(".claude")
@@ -3019,6 +3504,13 @@ fn claude_code_usage_series(days: Option<u32>) -> Result<Vec<UsageEvent>, String
     let mut rows = messages.into_values().collect::<Vec<_>>();
     rows.sort_by(|a, b| b.at.cmp(&a.at));
     Ok(rows)
+}
+
+#[tauri::command]
+async fn claude_code_usage_series(days: Option<u32>) -> Result<Vec<UsageEvent>, String> {
+    tauri::async_runtime::spawn_blocking(move || claude_code_usage_series_blocking(days))
+        .await
+        .map_err(|error| format!("Claude Code 日志读取线程异常：{error}"))?
 }
 
 fn opencode_local_candidates(custom_path: Option<String>) -> Vec<PathBuf> {
@@ -3414,8 +3906,7 @@ fn sync_opencode_local_usage(
     })
 }
 /// 返回最近七天每个 Codex turn 的最终 token 计数，供本地柱状图使用。
-#[tauri::command]
-fn codex_usage_series() -> Result<Vec<CodexUsagePoint>, String> {
+fn codex_usage_series_blocking() -> Result<Vec<CodexUsagePoint>, String> {
     let path = dirs::home_dir()
         .ok_or("无法定位用户目录")?
         .join(".codex")
@@ -3483,9 +3974,15 @@ fn codex_usage_series() -> Result<Vec<CodexUsagePoint>, String> {
     points.sort_by_key(|point| point.at);
     Ok(points)
 }
-/// 每个 turn 取最终的最大 total_usage_tokens，避免流式日志多次累计造成重复计数。
+
 #[tauri::command]
-fn codex_window_usage(state: State<AppDb>) -> Result<CodexWindowUsage, String> {
+async fn codex_usage_series() -> Result<Vec<CodexUsagePoint>, String> {
+    tauri::async_runtime::spawn_blocking(codex_usage_series_blocking)
+        .await
+        .map_err(|error| format!("Codex 用量读取线程异常：{error}"))?
+}
+/// 每个 turn 取最终的最大 total_usage_tokens，避免流式日志多次累计造成重复计数。
+fn codex_window_usage_blocking(state: &State<AppDb>) -> Result<CodexWindowUsage, String> {
     let path = dirs::home_dir()
         .ok_or("无法定位用户目录")?
         .join(".codex")
@@ -3531,9 +4028,19 @@ fn codex_window_usage(state: State<AppDb>) -> Result<CodexWindowUsage, String> {
     Ok(CodexWindowUsage {
         five_hour_used: five,
         seven_day_used: seven,
-        budget: current_budget(&state)?,
+        budget: current_budget(state)?,
         source: "Codex 本地日志（每个 turn 最终 token 计数）".into(),
     })
+}
+
+#[tauri::command]
+async fn codex_window_usage(app: AppHandle) -> Result<CodexWindowUsage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppDb>();
+        codex_window_usage_blocking(&state)
+    })
+    .await
+    .map_err(|error| format!("Codex 滚动窗口读取线程异常：{error}"))?
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -4394,6 +4901,25 @@ mod tests {
         assert_eq!(snapshot.seven_day.unwrap().remaining_percent, 66.0);
         assert_eq!(snapshot.plan_type.as_deref(), Some("plus"));
     }
+
+    #[test]
+    fn loopback_health_check_survives_fifty_bind_cycles() {
+        for _ in 0..50 {
+            let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+                .expect("应能绑定临时回环端口");
+            let port = listener.local_addr().expect("应读取端口").port();
+            wait_for_loopback_port(port, Duration::from_millis(250))
+                .expect("绑定成功的回环端口必须通过健康检查");
+            drop(listener);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn invalid_dpapi_blob_is_reported_without_panicking() {
+        let error = unprotect_secret(&[0x54, 0x4d, 0x01]).expect_err("损坏密文必须被拒绝");
+        assert!(error.contains("DPAPI"));
+    }
 }
 pub fn run() {
     tauri::Builder::default()
@@ -4408,13 +4934,20 @@ pub fn run() {
         .manage(AppDb::open())
         .manage(reliability::SyncCoordinator::default())
         .manage(ProxyServerState(Mutex::new(HashMap::new())))
+        .manage(ProxyJobCoordinator::default())
         .manage(FloatingWindowRuntime::default())
         .setup(|app| {
-            reliability::restore_watchers(
-                app.handle(),
-                &app.state::<AppDb>(),
-                &app.state::<reliability::SyncCoordinator>(),
-            );
+            // 大型 Agent 会话目录可能包含数千个子目录。监听恢复必须离开 Windows UI
+            // 消息线程，否则首次启动期间 DWM 会把窗口判断为“未响应”。
+            let watcher_app = app.handle().clone();
+            std::thread::spawn(move || {
+                reliability::restore_watchers(
+                    &watcher_app,
+                    &watcher_app.state::<AppDb>(),
+                    &watcher_app.state::<reliability::SyncCoordinator>(),
+                );
+            });
+            reliability::start_safety_rescan(app.handle().clone());
             // 显式把打包图标应用到主窗口与系统托盘，确保 Windows 任务栏不回退到默认图标。
             let app_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
             let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
@@ -4470,7 +5003,10 @@ pub fn run() {
             }
             #[cfg(windows)]
             if let Some(floating_window) = app.get_webview_window("floating") {
-                apply_floating_rounded_region(&floating_window, 24.0)?;
+                // 隐藏 WebView 在 setup 阶段尚未完成消息通道握手。此时调用
+                // inner_size / scale_factor 会让 WRY 返回
+                // `failed to receive message from webview`，最终导致整个应用退出。
+                // 圆角统一在窗口真正显示后，或收到尺寸变化时再应用。
                 let floating_copy = floating_window.clone();
                 floating_window.on_window_event(move |event| {
                     if let WindowEvent::Resized(_) = event {
@@ -4487,10 +5023,16 @@ pub fn run() {
                 start_floating_interaction_monitor(app.handle().clone());
             }
             if std::env::args().any(|arg| arg == "--floating") {
-                show_floating(app.handle())?;
-                if let Some(main) = app.get_webview_window("main") {
-                    let _ = main.hide();
-                }
+                // 便携版/验收入口同样等待 WebView 完成初始化；setup 钩子必须
+                // 尽快返回，不能同步等待第二窗口消息。
+                let floating_app = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(350));
+                    let _ = show_floating(&floating_app);
+                    if let Some(main) = floating_app.get_webview_window("main") {
+                        let _ = main.hide();
+                    }
+                });
             }
             Ok(())
         })
@@ -4510,8 +5052,17 @@ pub fn run() {
             reliability::list_sync_sources,
             reliability::get_sync_health,
             reliability::configure_local_source,
+            reliability::list_local_agent_definitions,
+            reliability::detect_local_agents,
+            reliability::configure_agent_source,
+            reliability::test_agent_source,
+            reliability::list_agent_source_models,
             reliability::sync_source,
             reliability::sync_all_sources,
+            reliability::start_sync_all,
+            reliability::start_sync_source,
+            reliability::cancel_sync,
+            reliability::get_sync_job,
             save_codex_budget,
             save_account_config,
             list_account_configs,
@@ -4522,7 +5073,10 @@ pub fn run() {
             list_balance_history,
             fetch_account_models,
             cc_switch_status,
+            repair_cc_switch_conflicts,
             auto_connect_client,
+            connect_agent_proxy,
+            disconnect_agent_proxy,
             restore_client_connection,
             export_encrypted_backup,
             import_encrypted_backup,
@@ -4545,6 +5099,8 @@ pub fn run() {
             send_budget_alert,
             start_proxy,
             start_all_proxies,
+            start_proxy_group,
+            get_proxy_job,
             fetch_arena_rankings,
             fetch_arena_model_profile,
             prepare_liquid_background_video,

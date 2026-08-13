@@ -1,21 +1,26 @@
 <script setup lang="ts">
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import ChartPreferences from './ChartPreferences.vue'
 import { useChartPreferences, type DashboardMode } from '../features/chartPreferences'
 import { chartColorThemes, useChartColorPreferences } from '../features/chartColorPreferences'
 import { appThemes, useThemePreferences } from '../features/themePreferences'
 import { useMotionPreferences } from '../features/motionPreferences'
 import { useVisualPreferences } from '../features/visualPreferences'
+import { useDescriptionPreferences, type DescriptionVisibility } from '../features/descriptionPreferences'
 import { currentCloudBaseUrl } from '../features/cloudConfig'
 import FloatingWindowV3, { type FloatingDashboardView, type FloatingMetric, type FloatingRenderStatusView } from './FloatingWindowV3.vue'
+import UpdateCenter from './UpdateCenter.vue'
 import type { FloatingInteractionMode, FloatingMode } from '../features/floatingPreferences'
 
 interface FloatingItem { id: string; title: string; description: string }
 interface CloudSession { email: string; base_url: string; expires_at: string }
 interface PreparedLiquidVideo { path: string; file_name: string; size_bytes: number; extension: string }
+type SectionId = 'general' | 'charts' | 'floating' | 'cloud' | 'codex' | 'proxy' | 'data' | 'update' | 'guide'
 const props = defineProps<{
+  initialSection?: SectionId
+  singleSection?: boolean
   floatingEnabled: boolean
   floatingItems: FloatingItem[]
   floatingOrder: string[]
@@ -26,6 +31,10 @@ const props = defineProps<{
   floatingAlwaysOnTop: boolean
   floatingPreviewRows: FloatingDashboardView[]
   floatingSelectedKey: string
+  floatingVisibleKeys: string[]
+  floatingPinnedKeys: string[]
+  floatingAllowMultipleExpanded: boolean
+  floatingSizes: Record<FloatingMode, { width: number; height: number }>
   floatingMetric: FloatingMetric
   floatingRenderStatus: FloatingRenderStatusView
   tokenManagerLogo: string
@@ -57,6 +66,11 @@ const emit = defineEmits<{
   reorderFloatingItem: [source: string, target: string]
   setFloatingLayout: [layout: 'grid' | 'list']
   setFloatingMode: [mode: FloatingMode]
+  setFloatingVisible: [key: string, checked: boolean]
+  reorderFloatingRow: [source: string, target: string]
+  toggleFloatingPin: [key: string]
+  setFloatingMultipleExpanded: [checked: boolean]
+  setFloatingSize: [mode: FloatingMode, width: number, height: number]
   setFloatingInteraction: [mode: FloatingInteractionMode]
   toggleFloatingAlwaysOnTop: []
   setMiniMode: [checked: boolean]
@@ -67,6 +81,7 @@ const emit = defineEmits<{
   importBackup: [password: string]
   openAccounts: []
   startAllProxies: []
+  reopenOnboarding: []
   cloudRequestCode: [baseUrl: string, email: string, purpose: 'login' | 'register']
   cloudPasswordLogin: [baseUrl: string, email: string, password: string]
   cloudPasswordRegister: [baseUrl: string, email: string, password: string, code: string]
@@ -76,8 +91,8 @@ const emit = defineEmits<{
   cloudImportTransfer: [link: string, password: string]
 }>()
 
-type SectionId = 'general' | 'charts' | 'floating' | 'cloud' | 'codex' | 'proxy' | 'data' | 'guide'
-const section = ref<SectionId>('general')
+const section = ref<SectionId>(props.initialSection ?? 'general')
+const settingsDetail = ref<HTMLElement | null>(null)
 const { mode, setMode } = useChartPreferences()
 const {
   themeId,
@@ -105,6 +120,20 @@ const {
 const { chartColorThemeId, setChartColorTheme } = useChartColorPreferences()
 const { motionEnabled, particlesEnabled, springMotionEnabled, spotlightEnabled, setMotionEnabled, setParticlesEnabled, setSpringMotionEnabled, setSpotlightEnabled } = useMotionPreferences()
 const { glassQuality, glassDistortion, setGlassQuality, setGlassDistortion, resetGlassDistortion } = useVisualPreferences()
+const { visibility: descriptionVisibility, setVisibility: setDescriptionVisibility } = useDescriptionPreferences()
+const descriptionVisibilityLabel = computed(() => ({ hover: '靠近时显示', always: '始终显示', hidden: '完全隐藏' })[descriptionVisibility.value])
+const descriptionOptions: Array<{ id: DescriptionVisibility; title: string; detail: string }> = [
+  { id: 'hover', title: '靠近时显示', detail: '只在对应标题、徽标或信息按钮附近显示这一条说明' },
+  { id: 'always', title: '始终显示', detail: '所有说明固定显示在各自标题下方' },
+  { id: 'hidden', title: '完全隐藏', detail: '除错误、风险与操作失败外，说明和信息按钮均不渲染' },
+]
+function onDescriptionModeKey(event: KeyboardEvent) {
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+  event.preventDefault()
+  const current = descriptionOptions.findIndex(item => item.id === descriptionVisibility.value)
+  const offset = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1
+  setDescriptionVisibility(descriptionOptions[(current + offset + descriptionOptions.length) % descriptionOptions.length].id)
+}
 const currentTheme = computed(() => appThemes.find(item => item.id === themeId.value) || appThemes[0])
 const liquidGlassEnabled = computed(() => currentTheme.value.material === 'liquid')
 const budgetFive = ref(props.budget5h)
@@ -122,6 +151,17 @@ const cloudImportLink = ref('')
 const cloudTtlHours = ref(24)
 const cloudOneTime = ref(true)
 const draggedFloatingItem = ref<string | null>(null)
+const draggedFloatingRow = ref<string | null>(null)
+function copyFloatingSizes(value: Record<FloatingMode, { width: number; height: number }>) {
+  // Vue props 是响应式代理，structuredClone 会直接抛出 DataCloneError，导致整个设置中心无法挂载。
+  return {
+    capsule: { ...value.capsule },
+    compact: { ...value.compact },
+    full: { ...value.full },
+  }
+}
+const sizeDraft = ref<Record<FloatingMode, { width: number; height: number }>>(copyFloatingSizes(props.floatingSizes))
+watch(() => props.floatingSizes, value => { sizeDraft.value = copyFloatingSizes(value) }, { deep: true })
 const floatingChartIds = new Set(['cacheChart', 'costChart', 'requestChart', 'tokenTrendChart'])
 const floatingChartItems = computed(() => props.floatingOrder.filter(id => floatingChartIds.has(id)))
 const floatingSummaryItems = computed(() => props.floatingOrder.filter(id => !floatingChartIds.has(id)))
@@ -156,16 +196,24 @@ const liquidWallpaperName = computed(() => liquidWallpaperPresets.find(item => i
 function floatingItem(id: string) { return props.floatingItems.find(item => item.id === id) }
 
 const allSections: Array<{ id: SectionId; title: string; detail: string; advanced?: boolean }> = [
-  { id: 'general', title: '通用与显示模式', detail: '全局简单 / 高级模式' },
+  { id: 'general', title: '外观与显示', detail: '复杂度、说明、主题与动态效果' },
   { id: 'charts', title: '仪表盘图表', detail: '选择需要的分析组件' },
   { id: 'floating', title: '悬浮窗', detail: '模块、排序与迷你模式' },
   { id: 'cloud', title: '云账户与迁移', detail: '邮箱登录和一次性链接' },
   { id: 'codex', title: 'Codex 额度', detail: '客户端额度与估算回退', advanced: true },
   { id: 'proxy', title: 'API 实时监控', detail: '本地代理与端口', advanced: true },
   { id: 'data', title: '数据与迁移', detail: '加密备份和恢复', advanced: true },
+  { id: 'update', title: '软件更新', detail: '签名、版本与发布说明' },
   { id: 'guide', title: '新手配置教程', detail: '从账户接入到仪表盘' }
 ]
 const sections = computed(() => mode.value === 'simple' ? allSections.filter(item => !item.advanced) : allSections)
+watch(() => props.initialSection, value => {
+  if (value && value !== section.value) section.value = value
+})
+watch(section, async () => {
+  await nextTick()
+  settingsDetail.value?.scrollIntoView({ behavior: motionEnabled.value ? 'smooth' : 'auto', block: 'start' })
+})
 
 function setGlobalMode(value: DashboardMode) {
   setMode(value)
@@ -334,20 +382,28 @@ function copyCloudLink() { if (props.cloudTransferLink) void window.navigator.cl
 </script>
 
 <template>
-  <section class="settings-center">
-    <aside class="settings-nav">
+  <section class="settings-center" :class="{ 'single-section': singleSection }">
+    <aside v-if="!singleSection" class="settings-nav" data-liquid-surface="settings-nav">
       <div><span>设置中心</span><h2>分类设置</h2></div>
       <button v-for="item in sections" :key="item.id" :class="{ active: section === item.id }" @click="section = item.id">
         <span><b>{{ item.title }}</b><small>{{ item.detail }}</small></span><i>›</i>
       </button>
     </aside>
-    <article class="settings-detail">
+    <article ref="settingsDetail" class="settings-detail" data-liquid-surface="settings-detail">
       <template v-if="section === 'general'">
-        <header><span>通用</span><h2>全局界面复杂度</h2><p>该选择同时作用于主仪表盘、设置页和悬浮窗。简单模式只保留日常核心操作，高级模式开放全部分析与代理设置。</p></header>
+        <header><span>外观与显示</span><h2>全局界面复杂度</h2><p>该选择同时作用于主仪表盘、设置页和悬浮窗。简单模式只保留日常核心操作，高级模式开放全部分析与代理设置。</p></header>
         <div class="global-mode">
           <button :class="{ active: mode === 'simple' }" @click="setGlobalMode('simple')"><b>简单模式</b><span>四项核心图表、精简悬浮窗和基础设置</span></button>
           <button :class="{ active: mode === 'advanced' }" @click="setGlobalMode('advanced')"><b>高级模式</b><span>全部图表、代理调试、预算与迁移工具</span></button>
         </div>
+        <section class="description-visibility" aria-labelledby="description-visibility-title">
+          <div><h3 id="description-visibility-title">补充说明显示方式</h3><p class="tm-supplemental-description">统一控制普通介绍、同步状态、数据来源、更新时间、隐私与空数据引导；错误、风险和操作失败始终可见。</p><strong class="description-current">当前模式：{{ descriptionVisibilityLabel }}</strong></div>
+          <div role="radiogroup" aria-label="补充说明显示方式" @keydown="onDescriptionModeKey">
+            <button v-for="item in descriptionOptions" :key="item.id" role="radio" :class="{ active: descriptionVisibility === item.id }" :aria-checked="descriptionVisibility === item.id" @click="setDescriptionVisibility(item.id)">
+              <span class="description-choice-title"><b>{{ item.title }}</b><i aria-hidden="true">✓</i></span><small>{{ item.detail }}</small>
+            </button>
+          </div>
+        </section>
         <button
           class="liquid-glass-quick-control"
           :class="{ active: liquidGlassEnabled }"
@@ -543,16 +599,31 @@ function copyCloudLink() { if (props.cloudTransferLink) void window.navigator.cl
         <div class="floating-settings-layout">
           <div class="floating-settings-main">
             <section class="floating-settings-section">
-              <div class="floating-section-heading"><div><span>窗口行为</span><h3>v0.8.5 经典双形态</h3></div><small>原版布局</small></div>
+              <div class="floating-section-heading"><div><span>窗口行为</span><h3>三种显示密度</h3></div><small>同一数据源</small></div>
               <div class="floating-shape-picker" role="radiogroup" aria-label="选择悬浮窗形态">
                 <button :class="{active:floatingMode==='capsule'}" role="radio" :aria-checked="floatingMode==='capsule'" @click="emit('setFloatingMode','capsule')"><i class="shape-capsule" aria-hidden="true"></i><span><b>v0.8.5 折叠胶囊</b><small>品牌控制栏、当前模型、Token 与环形指标</small></span><strong>{{floatingMode==='capsule'?'正在使用':'选择'}}</strong></button>
-                <button :class="{active:floatingMode!=='capsule'}" role="radio" :aria-checked="floatingMode!=='capsule'" @click="emit('setFloatingMode','compact')"><i class="shape-compact" aria-hidden="true"></i><span><b>v0.8.5 经典窗口</b><small>单模型、三项摘要与七天趋势图</small></span><strong>{{floatingMode!=='capsule'?'正在使用':'选择'}}</strong></button>
+                <button :class="{active:floatingMode==='compact'}" role="radio" :aria-checked="floatingMode==='compact'" @click="emit('setFloatingMode','compact')"><i class="shape-compact" aria-hidden="true"></i><span><b>紧凑窗口</b><small>多模型胶囊卡并列，悬停查看用量详情</small></span><strong>{{floatingMode==='compact'?'正在使用':'选择'}}</strong></button>
+                <button :class="{active:floatingMode==='full'}" role="radio" :aria-checked="floatingMode==='full'" @click="emit('setFloatingMode','full')"><i class="shape-full" aria-hidden="true"></i><span><b>完整窗口</b><small>多模型并列，可逐项展开简略七天图表</small></span><strong>{{floatingMode==='full'?'正在使用':'选择'}}</strong></button>
               </div>
-              <p class="floating-shape-help">点击后立即切换。折叠胶囊恢复为 360×152，展开窗口为 380×380；两种形态都可按住顶部品牌栏拖动。</p>
+              <p class="floating-shape-help">点击后立即切换。三种形态共用真实数据和主题；顶部品牌栏可拖动，紧凑和完整窗口可从八个方向调整大小。</p>
+              <div class="floating-size-editor">
+                <div><b>当前模式尺寸</b><small>修改后立即作用于桌面悬浮窗，并在重启后恢复。</small></div>
+                <label><span>宽度</span><input v-model.number="sizeDraft[floatingMode].width" type="number" :min="floatingMode==='capsule'?360:floatingMode==='compact'?420:520" max="960" step="10"></label>
+                <label><span>高度</span><input v-model.number="sizeDraft[floatingMode].height" type="number" :min="floatingMode==='capsule'?152:floatingMode==='compact'?300:520" max="1000" step="10"></label>
+                <button type="button" @click="emit('setFloatingSize',floatingMode,sizeDraft[floatingMode].width,sizeDraft[floatingMode].height)">应用尺寸</button>
+              </div>
               <div class="floating-behavior-grid">
                 <button :class="{active:floatingAlwaysOnTop}" @click="emit('toggleFloatingAlwaysOnTop')"><b>窗口置顶</b><small>{{floatingAlwaysOnTop?'始终位于其他窗口上方':'跟随普通窗口层级'}}</small></button>
                 <button class="active interaction-locked" type="button" aria-disabled="true"><b>永久保持交互</b><small>始终可点击、拖动、缩放和再次展开，不再自动穿透桌面</small></button>
               </div>
+            </section>
+            <section class="floating-settings-section">
+              <div class="floating-section-heading"><div><span>并列对象</span><h3>选择本地 Agent 与模型</h3></div><small>{{ floatingVisibleKeys.length }} 项</small></div>
+              <div class="floating-model-picker">
+                <label v-for="row in floatingPreviewRows" :key="row.key" :class="{dragging:draggedFloatingRow===row.key}" @dragover.prevent @drop.prevent="draggedFloatingRow&&draggedFloatingRow!==row.key&&emit('reorderFloatingRow',draggedFloatingRow,row.key);draggedFloatingRow=null"><i class="floating-drag" draggable="true" title="拖动调整顺序" @dragstart.stop="draggedFloatingRow=row.key" @dragend="draggedFloatingRow=null">⋮⋮</i><span><b>{{ row.title }}</b><small>{{ row.dataSource }}</small></span><button class="floating-pin-control" type="button" :aria-pressed="floatingPinnedKeys.includes(row.key)" @click.prevent="emit('toggleFloatingPin',row.key)">{{ floatingPinnedKeys.includes(row.key)?'已固定':'固定' }}</button><input class="floating-check" type="checkbox" :checked="floatingVisibleKeys.includes(row.key)" @change="emit('setFloatingVisible',row.key,($event.target as HTMLInputElement).checked)"></label>
+              </div>
+              <label class="switch-row floating-expand-policy"><span><b>允许同时展开多个 Agent</b><small>关闭时保持单行下钻，减少完整窗口的信息拥挤。</small></span><input type="checkbox" role="switch" :checked="floatingAllowMultipleExpanded" @change="emit('setFloatingMultipleExpanded',($event.target as HTMLInputElement).checked)"></label>
+              <p class="floating-shape-help">紧凑与完整模式只显示已勾选对象；至少保留一个。模型卡片始终读取自己的账户或本地 Agent 数据。</p>
             </section>
             <section class="floating-settings-section">
               <div class="floating-section-heading"><div><span>显示内容</span><h3>图表标签与数据模块</h3></div><small>{{ selectedFloatingCount }} 项已启用</small></div>
@@ -579,8 +650,8 @@ function copyCloudLink() { if (props.cloudTransferLink) void window.navigator.cl
             </section>
           </div>
           <aside class="floating-preview-card">
-            <div class="floating-preview-heading"><span>真实组件预览</span><b>{{ floatingMode==='capsule'?'v0.8.5 折叠':'v0.8.5 展开' }}</b></div>
-            <div class="floating-preview-window v3"><FloatingWindowV3 :mode="floatingMode" :rows="floatingPreviewRows" :selected-key="floatingSelectedKey" :expanded-keys="floatingPreviewRows.slice(0,1).map(row=>row.key)" :metric="floatingMetric" :available-metrics="['tokens','calls','cached','cost']" :syncing="false" next-refresh="30 秒" refreshed-text="刚刚" :proxy-label="proxyEndpointCount?'运行中':'待启动'" :proxy-active="proxyEndpointCount>0" :cc-label="ccSwitchRouting?'已接管':ccSwitchRunning?'运行中':'待机'" :cc-active="ccSwitchRouting" :always-on-top="floatingAlwaysOnTop" :interaction="floatingInteraction" :render-status="floatingRenderStatus" :logo-url="tokenManagerLogo" :codex-logo-url="codexLogo" preview /></div>
+            <div class="floating-preview-heading"><span>真实组件预览</span><b>{{ floatingMode==='capsule'?'折叠胶囊':floatingMode==='full'?'完整窗口':'紧凑窗口' }}</b></div>
+            <div class="floating-preview-window v3"><FloatingWindowV3 :mode="floatingMode" :rows="floatingPreviewRows.filter(row=>floatingVisibleKeys.includes(row.key))" :selected-key="floatingSelectedKey" :expanded-keys="floatingPreviewRows.slice(0,1).map(row=>row.key)" :pinned-keys="floatingPinnedKeys" :allow-multiple-expanded="floatingAllowMultipleExpanded" :metric="floatingMetric" :available-metrics="['tokens','calls','cached','cost']" :syncing="false" next-refresh="30 秒" refreshed-text="刚刚" :proxy-label="proxyEndpointCount?'运行中':'待启动'" :proxy-active="proxyEndpointCount>0" :cc-label="ccSwitchRouting?'已接管':ccSwitchRunning?'运行中':'待机'" :cc-active="ccSwitchRouting" :always-on-top="floatingAlwaysOnTop" :interaction="floatingInteraction" :render-status="floatingRenderStatus" :logo-url="tokenManagerLogo" :codex-logo-url="codexLogo" preview /></div>
             <p>这里与桌面悬浮窗复用同一个 Vue 组件，不再维护另一套容易错位的预览。</p>
             <small>{{ccSwitchDetail}}</small>
           </aside>
@@ -628,8 +699,12 @@ function copyCloudLink() { if (props.cloudTransferLink) void window.navigator.cl
         <header><span>本地数据</span><h2>加密迁移</h2><p>迁移包离线生成，导入新电脑后密钥会重新使用该电脑的 Windows DPAPI 加密。</p></header>
         <label class="password">迁移密码<input v-model="password" type="password" minlength="8" placeholder="至少 8 个字符"></label><div class="actions"><button class="primary" @click="emit('exportBackup',password)">导出全部配置</button><button @click="emit('importBackup',password)">导入迁移包</button></div><small>{{backupStatus || '请妥善保管迁移密码。'}}</small>
       </template>
+      <template v-else-if="section === 'update'">
+        <UpdateCenter embedded />
+      </template>
       <template v-else>
         <header><span>新手教程</span><h2>四步开始监控</h2><p>所有统计都在本机完成，不上传密钥或会话正文。</p></header>
+        <button class="primary onboarding-reopen" @click="emit('reopenOnboarding')">重新打开五步首次接入向导</button>
         <ol><li><b>添加 API 账户</b><span>从平台官网创建密钥，再由 Token Manager 使用 DPAPI 加密保存。</span><button @click="emit('openAccounts')">前往账户与模型</button></li><li><b>开启实时监控</b><span>为账户创建 127.0.0.1 本机代理地址。</span><button @click="emit('startAllProxies')">一键开启</button></li><li><b>修改调用工具 Base URL</b><span>将 SDK 或编辑器的地址改为软件显示的本机代理地址。</span></li><li><b>查看独立仪表盘</b><span>图表在上、Token 与余额在下，不会混入其他模型数据。</span></li></ol>
         <div class="account-state">当前已保存 {{ accountCount }} 个加密账户</div>
       </template>
@@ -638,8 +713,17 @@ function copyCloudLink() { if (props.cloudTransferLink) void window.navigator.cl
 </template>
 
 <style scoped>
+/* “悬浮窗”一级栏目复用真实设置组件，但不重复显示设置二级导航。 */
+.settings-center.single-section{grid-template-columns:minmax(0,1fr)!important}
+.settings-center.single-section .settings-detail{min-height:0}
 .settings-center{display:grid;grid-template-columns:250px minmax(0,1fr);gap:16px;align-items:start}.settings-nav,.settings-detail{border:1px solid var(--tm-line,#ededf0);border-radius:20px;background:var(--tm-bg,#fff)}.settings-nav{display:grid;gap:5px;padding:16px;position:sticky;top:18px}.settings-nav>div{padding:9px 8px 15px}.settings-nav span,.settings-detail header>span{color:var(--tm-muted,#6e6e73);font-size:10px}.settings-nav h2{margin:5px 0 0;font-size:20px}.settings-nav>button{display:flex;align-items:center;justify-content:space-between;padding:12px;border:0;border-radius:12px;background:transparent;color:var(--tm-ink,#1d1d1f);text-align:left}.settings-nav>button:hover{background:var(--tm-surface,#f5f5f7)}.settings-nav>button.active{background:var(--tm-ink,#111);color:var(--tm-on-ink,#fff)}.settings-nav button span{display:grid;gap:4px}.settings-nav button b{font-size:12px}.settings-nav button small{font-size:9px;opacity:.66}.settings-nav button i{font-style:normal;font-size:20px}.settings-detail{min-height:620px;padding:30px}.settings-detail header{margin-bottom:24px}.settings-detail h2{margin:6px 0 7px;font-size:24px}.settings-detail header p{max-width:720px;margin:0;color:var(--tm-muted,#6e6e73);font-size:12px;line-height:1.7}.global-mode{display:grid;grid-template-columns:1fr 1fr;gap:12px}.global-mode button{display:grid;gap:7px;padding:20px;border:1px solid var(--tm-line,#e5e5ea);border-radius:16px;background:var(--tm-bg,#fff);color:var(--tm-ink,#1d1d1f);text-align:left}.global-mode button.active{border-color:var(--tm-ink,#111);background:var(--tm-ink,#111);color:var(--tm-on-ink,#fff)}.global-mode span{font-size:10px;opacity:.7}.monochrome-note,.mini-box{display:grid;gap:7px;margin-top:16px;padding:17px;border-radius:14px;background:var(--tm-surface,#f2f2f7)}.monochrome-note span{color:var(--tm-muted,#6e6e73);font-size:11px}.theme-picker{margin-top:22px}.theme-picker h3{margin:0;font-size:15px}.theme-picker p{margin:5px 0 13px;color:var(--tm-muted);font-size:10px}.theme-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.theme-grid button{display:grid;grid-template-columns:42px 1fr auto;align-items:center;gap:10px;padding:11px;border:1px solid var(--tm-line);border-radius:13px;background:var(--tm-bg);color:var(--tm-ink);text-align:left}.theme-grid button.active{border-color:var(--tm-ink);background:var(--tm-surface)}.theme-grid i{display:grid;place-items:center;width:40px;height:30px;border:1px solid var(--tm-line);border-radius:9px}.theme-grid em{width:18px;height:18px;border-radius:6px}.theme-grid span{display:grid;gap:3px}.theme-grid small,.theme-grid strong{font-size:9px;opacity:.65}.primary,.settings-detail>button,.actions button,.settings-detail li button{padding:10px 14px;border:1px solid var(--tm-ink,#111);border-radius:11px;background:var(--tm-bg,#fff);color:var(--tm-ink,#111)}.primary{background:var(--tm-ink,#111)!important;color:var(--tm-on-ink,#fff)!important}.inline-control{display:flex;align-items:center;gap:7px;margin:18px 0;padding:10px;border-radius:12px;background:var(--tm-surface,#f2f2f7)}.inline-control span{margin-right:auto;font-size:11px}.inline-control button{border:0;border-radius:9px;background:transparent;padding:7px 10px}.inline-control button.active{background:var(--tm-ink,#111);color:var(--tm-on-ink,#fff)}.floating-list{display:grid;gap:1px;overflow:hidden;border-radius:14px;background:var(--tm-line,#e5e5ea)}.floating-list label{display:flex;align-items:center;gap:11px;padding:13px;background:var(--tm-bg,#fff);transition:opacity .18s ease,transform .28s cubic-bezier(.22,1,.36,1)}.floating-list label.dragging{opacity:.48;transform:scale(.985)}.floating-drag{display:grid;place-items:center;width:30px;height:30px;border-radius:9px;background:var(--tm-surface,#f2f2f7);color:var(--tm-muted);cursor:grab;font-size:15px;font-style:normal}.floating-drag:active{cursor:grabbing}.floating-list input{accent-color:var(--tm-ink,#111)}.floating-list span{display:grid;gap:3px;flex:1}.floating-list b{font-size:11px}.floating-list small{color:var(--tm-muted,#6e6e73);font-size:9px}.mini-box{grid-template-columns:1fr 1fr}.mini-box label{grid-column:1/-1}.mini-box select,.fields input,.password input{padding:11px;border:0;border-radius:10px;background:var(--tm-surface,#f2f2f7);color:var(--tm-ink)}.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}.fields label,.password{display:grid;gap:7px;color:var(--tm-muted,#6e6e73);font-size:10px}.actions{display:flex;gap:8px;margin:14px 0}.settings-detail>small{display:block;margin-top:12px;color:var(--tm-muted,#6e6e73)}.settings-detail ol{display:grid;gap:10px;padding:0;counter-reset:steps}.settings-detail li{display:grid;grid-template-columns:1fr auto;gap:6px 18px;padding:17px;border-radius:14px;background:var(--tm-surface,#f5f5f7);list-style:none}.settings-detail li span{grid-column:1;color:var(--tm-muted,#6e6e73);font-size:11px}.settings-detail li button{grid-column:2;grid-row:1/3}.account-state{margin-top:15px;color:var(--tm-muted,#6e6e73);font-size:11px}@media(max-width:900px){.settings-center{grid-template-columns:1fr}.settings-nav{position:static;grid-template-columns:repeat(2,1fr)}.settings-nav>div{grid-column:1/-1}.global-mode,.fields,.theme-grid{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){.floating-list label{transition:none}}
 .liquid-glass-quick-control{border-color:color-mix(in srgb,var(--tm-accent) 42%,var(--tm-line))!important;background:linear-gradient(135deg,color-mix(in srgb,var(--tm-accent) 10%,var(--tm-bg)),color-mix(in srgb,var(--tm-glow) 7%,var(--tm-bg)))!important}.liquid-glass-quick-control::after{background:linear-gradient(112deg,rgba(255,255,255,.22),transparent 30% 72%,color-mix(in srgb,var(--tm-accent) 10%,transparent))}.liquid-glass-quick-control:hover{border-color:color-mix(in srgb,var(--tm-accent) 72%,var(--tm-line))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 14px 34px color-mix(in srgb,var(--tm-glow) 14%,transparent)}.liquid-glass-quick-control.active{border-color:var(--tm-accent)!important;background:linear-gradient(135deg,color-mix(in srgb,var(--tm-accent) 22%,var(--tm-bg)),color-mix(in srgb,var(--tm-glow) 15%,var(--tm-bg)))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 0 0 3px color-mix(in srgb,var(--tm-accent) 10%,transparent),0 16px 38px color-mix(in srgb,var(--tm-glow) 18%,transparent)}.liquid-glass-orb{background:radial-gradient(circle at 30% 22%,#fff 0 5%,rgba(255,255,255,.55) 8%,transparent 24%),linear-gradient(145deg,color-mix(in srgb,var(--tm-accent) 76%,#fff),var(--tm-accent) 56%,color-mix(in srgb,var(--tm-accent) 35%,#081120));box-shadow:inset 0 1px 5px rgba(255,255,255,.48),inset 0 -5px 10px rgba(12,20,61,.28),0 8px 20px color-mix(in srgb,var(--tm-glow) 24%,transparent)}.liquid-glass-quick-copy small{color:color-mix(in srgb,var(--tm-accent) 76%,var(--tm-ink))}.liquid-glass-quick-control.active .liquid-glass-state>i{background:var(--tm-accent)}.motion-settings>.glass-quality-control{background:linear-gradient(145deg,color-mix(in srgb,var(--tm-accent) 9%,var(--tm-bg)),color-mix(in srgb,var(--tm-glow) 6%,var(--tm-bg)))}
+</style>
+<style scoped>
+.floating-size-editor{display:grid;grid-template-columns:minmax(150px,1fr) 100px 100px auto;align-items:end;gap:8px;margin:0 12px 12px;padding:12px;border-radius:14px;background:var(--tm-surface)}.floating-size-editor>div{display:grid;gap:3px}.floating-size-editor b{font-size:10px}.floating-size-editor small{color:var(--tm-muted);font-size:9px}.floating-size-editor label{display:grid;gap:4px;color:var(--tm-muted);font-size:9px}.floating-size-editor input{width:100%;box-sizing:border-box;padding:9px;border:1px solid var(--tm-line);border-radius:10px;background:var(--tm-bg);color:var(--tm-ink);font:inherit}.floating-size-editor button{min-height:36px;padding:8px 11px;border:0;border-radius:11px;background:var(--tm-ink);color:var(--tm-on-ink);font:inherit;font-size:9px;font-weight:700}.floating-model-picker{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;padding:0 12px 12px}.floating-model-picker label{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;min-width:0;align-items:center;gap:9px;padding:10px 11px;border-radius:12px;background:var(--tm-surface)}.floating-model-picker label.dragging{opacity:.55}.floating-model-picker label>span{display:grid;min-width:0;gap:2px}.floating-model-picker b,.floating-model-picker small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.floating-model-picker b{font-size:10px}.floating-model-picker small{color:var(--tm-muted);font-size:9px}.floating-pin-control{min-height:27px;padding:5px 8px!important;border:1px solid var(--tm-line)!important;border-radius:9px!important;background:var(--tm-bg)!important;color:var(--tm-muted)!important;font-size:8px!important}.floating-pin-control[aria-pressed=true]{border-color:var(--tm-ink)!important;color:var(--tm-ink)!important}.floating-model-picker .floating-check{position:relative;width:39px;height:23px;flex:0 0 auto;margin:0;appearance:none;border-radius:99px;background:var(--tm-line)}.floating-model-picker .floating-check::after{position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:var(--tm-bg);box-shadow:0 1px 3px rgba(0,0,0,.18);content:"";transition:transform var(--tm-motion-normal) var(--tm-ease-out)}.floating-model-picker .floating-check:checked{background:var(--tm-ink)}.floating-model-picker .floating-check:checked::after{transform:translateX(16px)}.floating-expand-policy{margin:0 12px 12px!important;border-top:0!important;border-radius:12px;background:var(--tm-surface)}@media(max-width:760px){.floating-size-editor{grid-template-columns:1fr 1fr}.floating-size-editor>div{grid-column:1/-1}.floating-size-editor button{grid-column:1/-1}.floating-model-picker{grid-template-columns:1fr}}
+</style>
+<style scoped>
+.description-visibility{display:grid;gap:12px;margin-top:18px;padding:17px;border:1px solid var(--tm-line,#e5e5ea);border-radius:16px;background:var(--tm-surface,#f2f2f7)}.description-visibility h3{margin:0;font-size:15px}.description-visibility p{margin:4px 0 0;color:var(--tm-muted,#6e6e73);font-size:10px;line-height:1.6}.description-current{display:inline-flex;margin-top:9px;padding:5px 9px;border-radius:999px;background:var(--tm-ink,#1d1d1f);color:var(--tm-on-ink,#fff);font-size:10px}.description-visibility>div:last-child{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.description-visibility button{display:grid;gap:7px;min-height:88px;padding:13px;border:1px solid var(--tm-line,#e5e5ea);border-radius:12px;background:var(--tm-bg,#fff);color:var(--tm-ink,#1d1d1f);font-family:inherit;text-align:left;transition:border-color var(--tm-motion-fast) ease,background var(--tm-motion-fast) ease,transform var(--tm-motion-fast) ease}.description-visibility button:hover{border-color:color-mix(in srgb,var(--tm-accent,#007aff) 45%,var(--tm-line));transform:translateY(-1px)}.description-visibility button.active{border:2px solid var(--tm-accent,#007aff);background:color-mix(in srgb,var(--tm-accent,#007aff) 12%,var(--tm-bg,#fff));box-shadow:0 0 0 3px color-mix(in srgb,var(--tm-accent,#007aff) 10%,transparent);color:var(--tm-ink,#1d1d1f)}.description-choice-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.description-choice-title i{display:grid;width:19px;height:19px;place-items:center;border-radius:999px;background:var(--tm-line,#e5e5ea);color:transparent;font-style:normal}.description-visibility button.active .description-choice-title i{background:var(--tm-accent,#007aff);color:#fff}.description-visibility button b{font-size:11px}.description-visibility button small{font-size:9px;line-height:1.5;color:var(--tm-muted,#6e6e73)}@media(max-width:760px){.description-visibility>div:last-child{grid-template-columns:1fr}}
 </style>
 <style scoped>
 /* 小窗模式按设置内容的真实宽度重排，避免主侧栏占位后发生挤压。 */
@@ -662,8 +746,23 @@ function copyCloudLink() { if (props.cloudTransferLink) void window.navigator.cl
   border-radius: 13px;
 }
 
+/* 三种悬浮形态共享真实预览，完整模式需要足够宽度显示图表与 Agent 明细。 */
+.floating-settings-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px) !important;
+}
+
+.floating-shape-picker {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.floating-shape-picker .shape-full {
+  width: 54px;
+  height: 46px;
+  border-radius: 15px;
+}
+
 .floating-preview-window.v3 {
-  max-width: 380px;
+  max-width: 560px;
   margin-inline: auto;
 }
 
@@ -678,7 +777,8 @@ function copyCloudLink() { if (props.cloudTransferLink) void window.navigator.cl
   }
 
   .floating-preview-window.v3 {
-    width: min(100%, 380px);
+    width: min(100%, 560px);
+    max-width: 560px !important;
   }
 }
 
@@ -794,12 +894,14 @@ function copyCloudLink() { if (props.cloudTransferLink) void window.navigator.cl
 }
 </style>
 <style scoped>
-/* 预览与原生窗口共用 v0.8.5 的逻辑尺寸和圆角。 */
-.floating-preview-window.v3 { width: 100%; height: 380px !important; }
-.floating-preview-window.v3:has(.floating-classic.collapsed) { height: 152px !important; border-radius: 28px; }
+/* 预览与原生窗口共用相同布局密度，避免完整模式被固定高度裁掉。 */
+.floating-preview-window.v3 { width: 100%; height: 440px !important; }
+.floating-preview-window.v3:has(.mode-full) { height: 620px !important; }
+.floating-preview-window.v3:has(.mode-compact) { height: 440px !important; }
+.floating-preview-window.v3:has(.mode-capsule) { height: 152px !important; border-radius: 28px; }
 </style>
 <style scoped>
-.floating-section-subtitle{padding:8px 14px;color:var(--tm-muted);font-size:8px;font-weight:700;letter-spacing:.08em}.floating-behavior-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;padding:0 12px 13px}.floating-behavior-grid button{display:grid;gap:4px;padding:11px;border:1px solid var(--tm-line);border-radius:12px;background:var(--tm-surface);color:var(--tm-ink);text-align:left}.floating-behavior-grid button.active{border-color:var(--tm-ink);background:var(--tm-ink);color:var(--tm-on-ink)}.floating-behavior-grid button.interaction-locked{cursor:default;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tm-on-ink) 12%,transparent)}.floating-behavior-grid b{font-size:10px}.floating-behavior-grid small{font-size:8px;line-height:1.45;opacity:.72}.floating-diagnostic-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0 15px 15px}.floating-diagnostic-row>span{display:grid;gap:4px}.floating-diagnostic-row b{font-size:11px}.floating-diagnostic-row small{color:var(--tm-muted);font-size:8px}.floating-diagnostic-row button{flex:0 0 auto;padding:8px 10px;border:0;border-radius:9px;background:var(--tm-ink);color:var(--tm-on-ink);font:inherit;font-size:8px}.floating-render-diagnostic{display:grid;grid-template-columns:1fr auto;gap:4px 10px;padding:0 15px 15px}.floating-render-diagnostic b{font-size:11px}.floating-render-diagnostic span{font-size:9px;font-variant-numeric:tabular-nums}.floating-render-diagnostic small{grid-column:1/-1;color:var(--tm-muted);font-size:8px;line-height:1.5}.floating-preview-window.v3{height:360px;padding:0;border:0;background:transparent}.status-active{color:#34c759!important}.status-degraded{color:#ff9500!important}.status-stopped{color:var(--tm-muted)!important}@media(max-width:760px){.floating-behavior-grid{grid-template-columns:1fr}}
+.floating-section-subtitle{padding:8px 14px;color:var(--tm-muted);font-size:8px;font-weight:700;letter-spacing:.08em}.floating-behavior-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;padding:0 12px 13px}.floating-behavior-grid button{display:grid;gap:4px;padding:11px;border:1px solid var(--tm-line);border-radius:12px;background:var(--tm-surface);color:var(--tm-ink);text-align:left}.floating-behavior-grid button.active{border-color:var(--tm-ink);background:var(--tm-ink);color:var(--tm-on-ink)}.floating-behavior-grid button.interaction-locked{cursor:default;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tm-on-ink) 12%,transparent)}.floating-behavior-grid b{font-size:10px}.floating-behavior-grid small{font-size:8px;line-height:1.45;opacity:.72}.floating-diagnostic-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0 15px 15px}.floating-diagnostic-row>span{display:grid;gap:4px}.floating-diagnostic-row b{font-size:11px}.floating-diagnostic-row small{color:var(--tm-muted);font-size:8px}.floating-diagnostic-row button{flex:0 0 auto;padding:8px 10px;border:0;border-radius:9px;background:var(--tm-ink);color:var(--tm-on-ink);font:inherit;font-size:8px}.floating-render-diagnostic{display:grid;grid-template-columns:1fr auto;gap:4px 10px;padding:0 15px 15px}.floating-render-diagnostic b{font-size:11px}.floating-render-diagnostic span{font-size:9px;font-variant-numeric:tabular-nums}.floating-render-diagnostic small{grid-column:1/-1;color:var(--tm-muted);font-size:8px;line-height:1.5}.floating-preview-window.v3{padding:0;border:0;background:transparent}.status-active{color:#34c759!important}.status-degraded{color:#ff9500!important}.status-stopped{color:var(--tm-muted)!important}@media(max-width:760px){.floating-behavior-grid{grid-template-columns:1fr}}
 </style>
 <style scoped>
 .theme-picker{padding-top:2px}.theme-grid{grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:8px}.theme-grid button{grid-template-columns:34px 1fr auto;min-height:58px;padding:10px 11px;border-radius:12px}.theme-grid i{width:32px;height:32px;border-radius:9px}.theme-grid em{width:14px;height:20px;border-radius:5px}.theme-grid strong{font-weight:600}.theme-grid button.active{box-shadow:inset 0 0 0 1px var(--tm-ink)}
@@ -832,4 +934,9 @@ function copyCloudLink() { if (props.cloudTransferLink) void window.navigator.cl
 .liquid-wallpaper-picker{display:grid;gap:8px}.liquid-wallpaper-picker>span{display:grid;gap:3px}.liquid-wallpaper-picker>span b{font-size:10px}.liquid-wallpaper-picker>span small{color:var(--tm-muted);font-size:8px;line-height:1.45}.liquid-wallpaper-picker>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.liquid-wallpaper-picker button{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:center;gap:9px;min-height:56px;padding:7px;border:1px solid var(--tm-line);border-radius:12px;background:color-mix(in srgb,var(--tm-bg) 76%,transparent);color:var(--tm-ink);text-align:left}.liquid-wallpaper-picker button.active{border-color:color-mix(in srgb,var(--tm-accent) 62%,var(--tm-line));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tm-accent) 15%,transparent)}.liquid-wallpaper-picker button>i{width:42px;height:40px;border-radius:10px;background-position:center;background-size:cover}.liquid-wallpaper-picker .wallpaper-auto>i{background:linear-gradient(135deg,#090b10 0 48%,#f8f9fb 52% 100%)}.liquid-wallpaper-picker .wallpaper-graphite>i{background:radial-gradient(ellipse at 28% 18%,#f7f7f9 0 9%,transparent 10%),linear-gradient(135deg,#08090c 20%,#5a5b60 48%,#ececef 51%,#15161a 76%)}.liquid-wallpaper-picker .wallpaper-pearl>i{border:1px solid #e5e5ea;background:radial-gradient(ellipse at 74% 26%,#42454b 0 8%,transparent 9%),linear-gradient(135deg,#fff 18%,#d5d8dd 47%,#4e5157 50%,#f4f5f7 76%)}.liquid-wallpaper-picker .wallpaper-none>i{border:1px dashed var(--tm-line);background:var(--tm-surface)}.liquid-wallpaper-picker button>span{display:grid;gap:3px;min-width:0}.liquid-wallpaper-picker button b{font-size:9px}.liquid-wallpaper-picker button small{color:var(--tm-muted);font-size:7px;line-height:1.35}@media(max-width:600px){.liquid-wallpaper-picker>div{grid-template-columns:1fr}}
 .chart-color-settings{margin-bottom:18px}.chart-color-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.chart-color-grid>button{display:grid;grid-template-columns:48px minmax(0,1fr) auto;align-items:center;gap:11px;min-height:70px;padding:11px;border:1px solid var(--tm-line);border-radius:14px;background:var(--tm-bg);color:var(--tm-ink);text-align:left;transition:transform .22s cubic-bezier(.22,1,.36,1),border-color .22s ease,background-color .22s ease}.chart-color-grid>button:hover{transform:translateY(-1px);background:var(--tm-surface)}.chart-color-grid>button.active{border-color:var(--tm-ink);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tm-ink) 10%,transparent)}.palette-ring{display:grid;width:46px;height:46px;place-items:center;border-radius:50%}.palette-ring>i{width:28px;height:28px;border-radius:50%;background:var(--tm-bg);box-shadow:inset 0 0 0 1px var(--tm-line)}.palette-copy{display:grid;gap:3px;min-width:0}.palette-copy>b{font-size:11px}.palette-copy>small{color:var(--tm-muted);font-size:8px}.palette-copy>i{display:flex;gap:3px;margin-top:3px}.palette-copy>i em{width:13px;height:4px;border-radius:99px}.chart-color-grid>button>strong{color:var(--tm-muted);font-size:8px;white-space:nowrap}.chart-color-grid>button.active>strong{color:var(--tm-ink)}@media(max-width:760px){.chart-color-grid{grid-template-columns:1fr}}
 .glass-distortion-control{display:grid;margin-top:0;border-top:1px solid var(--tm-line);background:color-mix(in srgb,var(--tm-bg) 48%,transparent)}.glass-distortion-control>header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:0;padding:16px}.glass-distortion-control>header>span{display:grid;gap:3px}.glass-distortion-control>header small{color:var(--tm-accent);font-size:8px;font-weight:700;letter-spacing:.06em}.glass-distortion-control>header b{font-size:14px}.glass-distortion-control>header em{color:var(--tm-muted);font-size:8px;font-style:normal}.glass-distortion-control>header button{min-height:32px;padding:0 10px;border:1px solid var(--tm-line);border-radius:10px;background:var(--tm-bg);color:var(--tm-ink);font:inherit;font-size:8px}.distortion-slider-row{display:grid;grid-template-columns:minmax(150px,1fr) auto minmax(160px,1.25fr);align-items:center;gap:13px;min-height:60px;padding:10px 16px;border-top:1px solid color-mix(in srgb,var(--tm-line) 72%,transparent)}.distortion-slider-row>span:first-child{display:grid;gap:3px}.distortion-slider-row b{font-size:10px}.distortion-slider-row small{color:var(--tm-muted);font-size:8px;line-height:1.4}.distortion-slider-value{min-width:36px;color:var(--tm-ink);font-size:9px;font-variant-numeric:tabular-nums;text-align:right}.distortion-slider-row input[type="range"]{width:100%;height:22px;margin:0;appearance:none;background:transparent;cursor:pointer}.distortion-slider-row input[type="range"]::-webkit-slider-runnable-track{height:4px;border-radius:99px;background:linear-gradient(90deg,color-mix(in srgb,var(--tm-accent) 72%,var(--tm-ink)),var(--tm-line))}.distortion-slider-row input[type="range"]::-webkit-slider-thumb{width:17px;height:17px;margin-top:-6.5px;appearance:none;border:1px solid color-mix(in srgb,var(--tm-ink) 14%,transparent);border-radius:50%;background:var(--tm-bg);box-shadow:0 2px 5px rgba(0,0,0,.16)}.glass-distortion-control>p{margin:0;padding:11px 16px 14px;border-top:1px solid color-mix(in srgb,var(--tm-line) 72%,transparent);color:var(--tm-muted);font-size:8px;line-height:1.55}@media(max-width:760px){.distortion-slider-row{grid-template-columns:minmax(0,1fr) auto}.distortion-slider-row input{grid-column:1/-1}.glass-distortion-control>header{align-items:stretch;flex-direction:column}.glass-distortion-control>header button{align-self:flex-start}}
+</style>
+<style scoped>
+/* v0.11.3：半屏仍保持二级导航和内容双栏，各自只在需要时滚动。 */
+.settings-center{grid-template-columns:220px minmax(0,1fr)!important;align-items:start}.settings-nav{position:sticky!important;top:14px!important;display:grid!important;grid-template-columns:1fr!important;max-height:calc(100dvh - 116px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}.settings-nav>div{grid-column:auto!important}.settings-detail{min-height:620px;padding:26px;scroll-margin-top:14px}.onboarding-reopen{margin-bottom:16px}
+@media(max-width:760px){.settings-center{grid-template-columns:minmax(0,1fr)!important}.settings-nav{z-index:12;top:8px!important;display:flex!important;max-height:none;padding:7px;overflow-x:auto;overflow-y:hidden;border-radius:16px;scrollbar-width:none}.settings-nav>div{display:none}.settings-nav>button{min-width:max-content}.settings-nav button small,.settings-nav button i{display:none}.settings-detail{min-height:0;padding:18px;scroll-margin-top:84px}}
 </style>

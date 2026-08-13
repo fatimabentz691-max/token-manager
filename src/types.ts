@@ -40,16 +40,65 @@ export interface Usage {
   currency?: string
   canonical_key?: string
   is_shadowed?: boolean
+  request_count?: number
 }
 
 export interface SyncSourceConfig {
   id: string
   provider: string
   kind: UsageSourceKind
-  mode: 'auto' | 'sqlite' | 'json'
+  mode: 'auto' | 'sqlite' | 'json' | 'jsonl' | 'log' | 'otel' | 'cache'
   path: string
   enabled: boolean
   interval_seconds: number
+  agent_id: string
+  collector_kind: string
+  paths: string[]
+  capabilities: string[]
+  detected: boolean
+  schema_version: number
+  path_mode: 'auto' | 'manual'
+  path_spec_ids: string[]
+}
+
+export interface AgentPathCandidate {
+  id: string
+  template: string
+  resolved_path: string
+  exists: boolean
+  root_kind: 'home' | 'app_data' | 'local_app_data' | 'environment'
+}
+
+/** Rust 本地 Agent 注册表的只读定义；不含提示词、回复或认证数据。 */
+export interface LocalAgentDefinition {
+  id: string
+  name: string
+  provider: string
+  collector_kind: string
+  default_paths: string[]
+  capabilities: string[]
+  proxy_protocol: 'openai' | 'anthropic' | 'both' | null
+  detected: boolean
+  detected_paths: string[]
+  schema_version: number
+  detail: string
+  brand_id: string
+  official_url: string
+  collector_mode: string
+  path_specs: string[]
+  usage_capability: 'official' | 'observed' | 'none'
+  limit_capability: 'client' | 'official' | 'none'
+  proxy_capability: 'openai' | 'anthropic' | 'both' | 'none'
+  schema_fingerprint: string
+  support_state: 'supported' | 'detected_only' | 'experimental'
+  path_candidates: AgentPathCandidate[]
+}
+
+export interface AgentSourceModel {
+  source_id: string
+  model: string
+  records: number
+  last_seen_at: string
 }
 
 export interface SyncHealth {
@@ -63,6 +112,18 @@ export interface SyncHealth {
   latency_ms: number
   imported: number
   detail: string
+}
+
+export interface SyncJob {
+  id: string
+  kind: 'all' | 'source'
+  source_ids: string[]
+  status: 'queued' | 'running' | 'completed' | 'cancelled'
+  completed: number
+  total: number
+  started_at: string
+  finished_at: string | null
+  last_error: string | null
 }
 
 export interface Dashboard {

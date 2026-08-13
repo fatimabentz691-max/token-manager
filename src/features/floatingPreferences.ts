@@ -40,7 +40,11 @@ export interface FloatingConfigV3 {
   order: FloatingModuleId[]
   mini: [FloatingModuleId, FloatingModuleId]
   selectedKey: string
+  /** 紧凑和完整模式中并列显示的仪表盘；为空时自动回退到当前仪表盘。 */
+  visibleKeys: string[]
+  pinnedKeys: string[]
   expandedKeys: string[]
+  allowMultipleExpanded: boolean
   interaction: FloatingInteractionMode
   alwaysOnTop: boolean
   snapToEdges: boolean
@@ -51,10 +55,10 @@ export interface FloatingConfigV3 {
 export const floatingConfigStorageKey = 'token-manager-floating-config'
 
 export const defaultFloatingSizes: Record<FloatingMode, FloatingWindowSize> = {
-  // v0.8.5 的真实尺寸：折叠态 360×152，展开态 380×380。
+  // 胶囊保留 v0.8.5 的稳定尺寸；紧凑/完整模式为 Agent 列表和七天图表预留滚动空间。
   capsule: { width: 360, height: 152 },
-  compact: { width: 380, height: 380 },
-  full: { width: 380, height: 380 },
+  compact: { width: 440, height: 540 },
+  full: { width: 560, height: 760 },
 }
 
 export function createDefaultFloatingConfig(ids: FloatingModuleId[]): FloatingConfigV3 {
@@ -66,7 +70,10 @@ export function createDefaultFloatingConfig(ids: FloatingModuleId[]): FloatingCo
     order: [...ids],
     mini: ['globalRemaining', 'todayTokens'],
     selectedKey: '__all__',
+    visibleKeys: ['__all__', '__codex__', '__claude__'],
+    pinnedKeys: ['__all__'],
     expandedKeys: [],
+    allowMultipleExpanded: false,
     interaction: 'interactive',
     alwaysOnTop: true,
     snapToEdges: true,
@@ -75,11 +82,11 @@ export function createDefaultFloatingConfig(ids: FloatingModuleId[]): FloatingCo
   }
 }
 
-function safeSize(value: unknown, fallback: FloatingWindowSize): FloatingWindowSize {
+function safeSize(value: unknown, fallback: FloatingWindowSize, minimum: FloatingWindowSize): FloatingWindowSize {
   const candidate = value as Partial<FloatingWindowSize> | undefined
   return {
-    width: Math.max(300, Math.min(960, Number(candidate?.width) || fallback.width)),
-    height: Math.max(96, Math.min(1000, Number(candidate?.height) || fallback.height)),
+    width: Math.max(minimum.width, Math.min(960, Number(candidate?.width) || fallback.width)),
+    height: Math.max(minimum.height, Math.min(1000, Number(candidate?.height) || fallback.height)),
   }
 }
 
@@ -98,8 +105,9 @@ export function loadFloatingConfigV3(ids: FloatingModuleId[]): FloatingConfigV3 
       : raw.mode === 'full'
         ? 'full'
         : 'compact'
-    // v0.8.5 只保留展开与胶囊两态；旧版 full 配置自动落回经典展开态。
-    const mode: FloatingMode = raw.mode === 'capsule' ? 'capsule' : raw.mode ? 'compact' : legacyMode
+    const mode: FloatingMode = raw.mode === 'capsule' || raw.mode === 'compact' || raw.mode === 'full'
+      ? raw.mode
+      : legacyMode
     return {
       version: 3,
       mode,
@@ -108,21 +116,28 @@ export function loadFloatingConfigV3(ids: FloatingModuleId[]): FloatingConfigV3 
       order,
       mini: [mini[0] || 'globalRemaining', mini[1] || 'todayTokens'],
       selectedKey: typeof raw.selectedKey === 'string' ? raw.selectedKey : '__all__',
+      visibleKeys: Array.isArray(raw.visibleKeys)
+        ? raw.visibleKeys.filter((value: unknown): value is string => typeof value === 'string').slice(0, 12)
+        : ['__all__', '__codex__', '__claude__'],
+      pinnedKeys: Array.isArray(raw.pinnedKeys)
+        ? raw.pinnedKeys.filter((value: unknown): value is string => typeof value === 'string').slice(0, 12)
+        : ['__all__'],
       expandedKeys: Array.isArray(raw.expandedKeys)
         ? raw.expandedKeys.filter((value: unknown): value is string => typeof value === 'string')
         : typeof raw.expandedDashboard === 'string' && raw.expandedDashboard
           ? [raw.expandedDashboard]
           : [],
+      allowMultipleExpanded: raw.allowMultipleExpanded === true,
       // 旧版的“智能穿透/手动穿透”可能导致窗口无法拖动或再次展开。
       // 读取配置时直接迁移为永久交互，保证升级后无需用户手动修复。
       interaction: 'interactive',
       alwaysOnTop: raw.alwaysOnTop !== false,
       snapToEdges: raw.snapToEdges !== false,
       sizes: {
-        // 旧版曾保存过 360×104 的黑色长胶囊；这里统一迁移回 v0.8.5 折叠尺寸。
+        // 旧版曾保存过 360×104 的长胶囊；这里统一迁移回稳定折叠尺寸。
         capsule: { ...defaultFloatingSizes.capsule },
-        compact: safeSize(raw.sizes?.compact, defaultFloatingSizes.compact),
-        full: safeSize(raw.sizes?.full, defaultFloatingSizes.full),
+        compact: safeSize(raw.sizes?.compact, defaultFloatingSizes.compact, { width: 400, height: 300 }),
+        full: safeSize(raw.sizes?.full, defaultFloatingSizes.full, { width: 500, height: 520 }),
       },
       position: Number.isFinite(raw.position?.x) && Number.isFinite(raw.position?.y)
         ? { x: Number(raw.position.x), y: Number(raw.position.y) }

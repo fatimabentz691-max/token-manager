@@ -115,7 +115,7 @@ function optimize(){
 <template>
   <section class="prompt-center">
     <header class="prompt-hero">
-      <div><span>PROMPT LIBRARY</span><h2>Prompt 管理中心</h2><p>本地保存、快速复用，并在发送前检查 Prompt 的清晰度与约束。</p></div>
+      <div><span>PROMPT LIBRARY</span><h2>Prompt 管理中心</h2><p class="tm-supplemental-description">本地保存、快速复用，并在发送前检查 Prompt 的清晰度与约束。</p></div>
       <button class="prompt-primary" type="button" @click="openEditor()">＋ 新建 Prompt</button>
     </header>
     <section class="prompt-stats">

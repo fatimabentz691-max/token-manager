@@ -121,7 +121,7 @@ const buckets = computed(() => {
     const row = index.get(key)
     if (!row) continue
     const tokens = item.input + item.output
-    row.tokens += tokens; row.cost += item.cost; row.calls += 1; row.cached += item.cached
+    row.tokens += tokens; row.cost += item.cost; row.calls += item.request_count ?? 1; row.cached += item.cached
     row.providers.set(item.provider, (row.providers.get(item.provider) || 0) + tokens)
   }
   for (const item of props.codexSeries) {
@@ -151,7 +151,7 @@ const monthCost = computed(() => monthUsage.value.reduce((sum, item) => sum + it
 const totalInput = computed(() => monthUsage.value.reduce((sum, item) => sum + item.input, 0))
 const totalCached = computed(() => monthUsage.value.reduce((sum, item) => sum + item.cached, 0))
 const cacheRate = computed(() => totalInput.value ? Math.min(100, totalCached.value / totalInput.value * 100) : 0)
-const cachedCalls = computed(() => monthUsage.value.filter(item => item.cached > 0).length)
+const cachedCalls = computed(() => monthUsage.value.filter(item => item.cached > 0).reduce((sum,item)=>sum+(item.request_count??1),0))
 
 const codexCategories = computed(() => {
   const values = new Map([['全新生成', 0], ['修改调试', 0], ['问答解释', 0]])
@@ -306,7 +306,7 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resizeCharts); for 
 <template>
   <section class="analytics-suite" aria-labelledby="analytics-title">
     <header class="analytics-toolbar">
-      <div><h2 id="analytics-title">可视化分析</h2><p>{{ mode === 'simple' ? '只显示日常最需要的核心图表' : '展示完整的用量、成本、缓存和额度分析' }}</p></div>
+      <div><h2 id="analytics-title">可视化分析</h2><p class="tm-supplemental-description">{{ mode === 'simple' ? '只显示日常最需要的核心图表' : '展示完整的用量、成本、缓存和额度分析' }}</p></div>
       <div class="toolbar-actions">
         <button class="customize-trigger" :class="{active:customizing}" :aria-pressed="customizing" @click="customizing=!customizing">{{customizing?'完成自定义':'自定义卡片'}}</button>
         <div class="segmented" role="group" aria-label="显示模式"><button :class="{active:mode==='simple'}" @click="setMode('simple' as DashboardMode)">简单</button><button :class="{active:mode==='advanced'}" @click="setMode('advanced' as DashboardMode)">高级</button></div>
@@ -315,7 +315,7 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resizeCharts); for 
     </header>
     <TransitionGroup v-if="visibleCharts.length" name="card-reflow" tag="div" class="chart-grid" :class="`mode-${mode}`">
       <article v-for="id in visibleCharts" :key="id" class="visual-card" :class="[`chart-${id}`, {wide:wideChartIds.has(id),fill:fillRowCharts.has(id),empty:!hasData(id),dragging:draggedChart===id,customizing}]" @dragover.prevent @drop="dropChart(id)">
-        <div class="visual-card-heading"><div><h3>{{ chartCatalog.find(item=>item.id===id)?.title }}</h3><p>{{ chartCatalog.find(item=>item.id===id)?.description }}</p></div><div v-if="customizing" class="chart-card-actions" role="toolbar" :aria-label="`${chartCatalog.find(item=>item.id===id)?.title} 卡片操作`"><button class="drag-chart" draggable="true" :aria-label="`拖动 ${chartCatalog.find(item=>item.id===id)?.title} 调整位置`" title="按住拖动调整位置" @dragstart="startChartDrag(id,$event)" @dragend="draggedChart=null"><span aria-hidden="true">⠿</span> 拖动</button><button class="remove-chart" :aria-label="`删除 ${chartCatalog.find(item=>item.id===id)?.title}`" title="从仪表盘移除" @click.stop="setChartEnabled(id,false)">删除</button></div><span v-else>{{ range==='today'?'今日':range==='7d'?'近 7 天':'近 30 天' }}</span></div>
+        <div class="visual-card-heading"><div><h3>{{ chartCatalog.find(item=>item.id===id)?.title }}</h3><p class="tm-supplemental-description">{{ chartCatalog.find(item=>item.id===id)?.description }}</p></div><div v-if="customizing" class="chart-card-actions" role="toolbar" :aria-label="`${chartCatalog.find(item=>item.id===id)?.title} 卡片操作`"><button class="drag-chart" draggable="true" :aria-label="`拖动 ${chartCatalog.find(item=>item.id===id)?.title} 调整位置`" title="按住拖动调整位置" @dragstart="startChartDrag(id,$event)" @dragend="draggedChart=null"><span aria-hidden="true">⠿</span> 拖动</button><button class="remove-chart" :aria-label="`删除 ${chartCatalog.find(item=>item.id===id)?.title}`" title="从仪表盘移除" @click.stop="setChartEnabled(id,false)">删除</button></div><span v-else>{{ range==='today'?'今日':range==='7d'?'近 7 天':'近 30 天' }}</span></div>
         <template v-if="id==='quota5h'">
           <div class="quota-progress"><div><strong>{{ (100-used5hPercent).toFixed(0) }}%</strong><span>剩余</span></div><div class="quota-track"><i :class="{warning:used5hPercent>=80,critical:used5hPercent>=90}" :style="{width:used5hPercent+'%'}"></i></div><small>已用 {{ used5h.toLocaleString() }} / {{ budget5h.toLocaleString() }} Token</small></div>
         </template>
