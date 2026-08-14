@@ -100,6 +100,9 @@ type SiteContent = {
 };
 
 const encode = (value: string) => new TextEncoder().encode(value);
+// 免费计划无法创建细粒度 Secret 时使用随机强密钥的不可逆哈希；密钥本体不进入源码。
+const ADMIN_FALLBACK_HASH =
+  "580d58e3c4cc3f6828d00d10cc13aa5922b68ff2a768023164645335e8e0de25";
 /**
  * 官网部署在 GitHub Pages，与 Netlify API 不同源。
  * 公共读取接口和管理后台都需要在浏览器中访问，因此所有 JSON 响应统一携带 CORS；
@@ -137,6 +140,23 @@ const safeEqual = (a: string, b: string) => {
   for (let i = 0; i < a.length; i++)
     result |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return result === 0;
+};
+/**
+ * Netlify 的新旧函数运行时对环境变量提供了两套入口。
+ * 统一读取两者，避免 CLI 已配置变量但函数只能从 process.env 获取时鉴权失效。
+ */
+const runtimeEnv = (name: string) => {
+  try {
+    const value = Netlify.env.get(name);
+    if (value) return value;
+  } catch {
+    // 旧函数运行时可能没有 Netlify.env，继续读取标准环境。
+  }
+  return (
+    globalThis as typeof globalThis & {
+      process?: { env?: Record<string, string | undefined> };
+    }
+  ).process?.env?.[name] ?? "";
 };
 const normalizeEmail = (value: unknown) => {
   const email = String(value ?? "")
@@ -286,10 +306,8 @@ async function consumeCode(email: string, purpose: string, code: string) {
 }
 async function requireAdmin(req: Request) {
   const supplied = req.headers.get("x-admin-key") ?? "";
-  const expected = Netlify.env.get("ADMIN_KEY") ?? "";
-  const configuredHash = (
-    Netlify.env.get("TOKEN_MANAGER_ADMIN_KEY_SHA256") ?? ""
-  )
+  const expected = runtimeEnv("ADMIN_KEY");
+  const configuredHash = runtimeEnv("TOKEN_MANAGER_ADMIN_KEY_SHA256")
     .trim()
     .toLowerCase();
   if (expected) {
@@ -298,7 +316,7 @@ async function requireAdmin(req: Request) {
   }
   const expectedHash = /^[a-f0-9]{64}$/.test(configuredHash)
     ? configuredHash
-    : "a1e67e221f037951cccced0e17e90a4e60651f2bacdca2ab009b3ce1fd0bc21b";
+    : ADMIN_FALLBACK_HASH;
   if (!safeEqual(await sha(supplied), expectedHash))
     throw new ApiFault(401, "管理密钥错误");
 }
@@ -1204,6 +1222,19 @@ export default async (req: Request, context: Context) => {
   if (req.method === "OPTIONS") return json({ ok: true });
   try {
     const path = normalizePath(req);
+    if (path === "/v1/health" && req.method === "GET")
+      return json({
+        ok: true,
+        admin_auth_configured: Boolean(
+          runtimeEnv("ADMIN_KEY") ||
+            /^[a-f0-9]{64}$/.test(
+              runtimeEnv("TOKEN_MANAGER_ADMIN_KEY_SHA256")
+                .trim()
+                .toLowerCase(),
+            ) || ADMIN_FALLBACK_HASH,
+        ),
+        server_time: now(),
+      });
     if (path === "/v1/content" && req.method === "GET")
       return json({
         items: activeContent(await allJson<ContentItem>("tm-content")),
