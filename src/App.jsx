@@ -25,7 +25,7 @@ const fallbackSiteContent = {
 const fallbackRelease = {
   version: "0.11.13",
   title: "更新公告与 Harness 仪表盘修复版",
-  download_href: `${cloudBaseUrl}/v1/download/latest?source=github-pages`,
+  download_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.13/Token.Manager_0.11.13_x64-setup.exe",
   portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.13/TokenManager_0.11.13_x64-portable.exe",
   file_name: "Token.Manager_0.11.13_x64-setup.exe",
   size_bytes: 11144332,
@@ -68,7 +68,7 @@ export function App() {
   }, []);
   const releaseSize = release.size_bytes ? `${(release.size_bytes / 1048576).toFixed(2)} MB` : "Windows 10 / 11 64 位";
   const releaseDate = new Date(release.published_at).toLocaleDateString("zh-CN");
-  const trackedDownloadHref = `${cloudBaseUrl}/v1/download/latest?source=github-pages`;
+  const trackedDownloadHref = "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.13/Token.Manager_0.11.13_x64-setup.exe";
 
   return (
     <div className="site-shell">
