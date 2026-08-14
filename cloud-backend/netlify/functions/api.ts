@@ -102,7 +102,7 @@ type SiteContent = {
 const encode = (value: string) => new TextEncoder().encode(value);
 // 免费计划无法创建细粒度 Secret 时使用随机强密钥的不可逆哈希；密钥本体不进入源码。
 const ADMIN_FALLBACK_HASH =
-  "580d58e3c4cc3f6828d00d10cc13aa5922b68ff2a768023164645335e8e0de25";
+  "33f25e78c5159a63643d80571345d9c7928015138a79648a109058b64427c44e";
 /**
  * 官网部署在 GitHub Pages，与 Netlify API 不同源。
  * 公共读取接口和管理后台都需要在浏览器中访问，因此所有 JSON 响应统一携带 CORS；
@@ -425,24 +425,33 @@ function validateSiteContent(
   } as SiteContent;
 }
 const bundledRelease: ReleaseInfo = {
-  version: "0.11.2",
+  version: "0.11.11",
   channel: "stable",
   platform: "windows-x86_64",
-  title: "悬浮窗可靠性修复版",
+  title: "DeepSeek Harness 实时代理版",
   download_url:
-    "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.2/TokenManager_0.11.2_x64-setup.exe",
-  updater_url: "",
-  file_name: "TokenManager_0.11.2_x64-setup.exe",
-  size_bytes: 11100259,
-  sha256: "6D8FFF924FB0E6C6DAC6E42F948F7650474DE4369FED684F38956D00692B44F1",
-  signature: "",
+    "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.11/Token.Manager_0.11.11_x64-setup.exe",
+  updater_url:
+    "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.11/Token.Manager_0.11.11_x64-setup.exe",
+  file_name: "Token.Manager_0.11.11_x64-setup.exe",
+  size_bytes: 11144767,
+  sha256: "1D1375A7E157FE999331DC325AE508FE9B9CE77C252FB0636D41D6944D83AC56",
+  signature: "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSdit0cXZNa1lXaS9JOU1MYUYyVjRzaThPOGUvL1diano0TU5DSXJVUG01TTJCYWlTTkgrb3VYVHBFOTltcFJEdFdMOVFLQWxCVzRZZ3BEbzBDczNXVXF4dkFqeUp3TVFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2Njc4NDI0CWZpbGU6VG9rZW4gTWFuYWdlcl8wLjExLjExX3g2NC1zZXR1cC5leGUKRjFha2VIVXIraG9xbDNDNGxmVXdxRkkvcHhURmlPb1Y1YVlCZVZnWUV4a2Q0MnRHRFcxeWFkSTBVWWNUUTBYT214N1RwRkg2NnFLRXNDa1o0UzZyQXc9PQo=",
   notes:
-    "已回退到上一版稳定安装包。v0.11.5 悬浮窗运行时问题修复完成并通过原生验证前，不再作为官网默认下载。",
-  highlights: [],
-  fixes: [],
-  published_at: "2026-08-12T00:00:00.000Z",
+    "新增 DeepSeek Harness 本地代理；明确区分代理监听、Agent 接入和真实请求捕获。余额变化但请求没有经过本机代理时，不再误报已完成 Token 统计。",
+  highlights: [
+    "自动识别 DSH_HOME 或当前用户目录下的 DeepSeek Harness",
+    "通过官方 llm-deepseek.baseURL 热更新接入本机代理",
+    "保留 Harness 原配置备份，不读取或改写 API Key",
+  ],
+  fixes: [
+    "修复代理端口启动就误显示为调用工具已自动接入",
+    "修复 DeepSeek 余额变化却没有捕获请求时的误导提示",
+    "扩大余额与流式代理请求的关联窗口，降低延迟误报",
+  ],
+  published_at: "2026-08-14T03:33:52.000Z",
   enabled: true,
-  updated_at: "2026-08-13T10:30:00.000Z",
+  updated_at: "2026-08-14T03:33:52.000Z",
 };
 function compareVersions(left: string, right: string) {
   const parse = (value: string) =>
