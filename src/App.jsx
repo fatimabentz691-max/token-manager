@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 const providers = [
-  "Codex", "Claude Code", "Cursor", "OpenAI", "Anthropic", "Gemini", "DeepSeek", "豆包",
+  "Codex", "Claude Code", "Cursor", "DeepSeek Harness", "OpenAI", "Anthropic", "Gemini", "DeepSeek", "豆包",
   "通义千问", "腾讯混元", "文心千帆", "智谱 GLM", "Kimi", "讯飞星火", "MiniMax",
   "阶跃星辰", "零一万物", "百川智能", "商汤日日新", "MIMO", "OpenAI 兼容服务",
 ];
@@ -23,15 +23,15 @@ const fallbackSiteContent = {
   privacy_note: "本地解析 · 密钥加密 · 不上传代码与日志",
 };
 const fallbackRelease = {
-  version: "0.11.2",
-  title: "悬浮窗可靠性修复版",
-  download_href: publicUrl("downloads/TokenManager_0.11.2_x64-setup.exe"),
-  portable_href: publicUrl("downloads/TokenManager_0.11.2_x64-portable.exe"),
-  file_name: "TokenManager_0.11.2_x64-setup.exe",
-  size_bytes: 11100259,
-  sha256: "6D8FFF924FB0E6C6DAC6E42F948F7650474DE4369FED684F38956D00692B44F1",
-  published_at: "2026-08-12T00:00:00.000Z",
-  notes: "修复大版悬浮窗图表统计、Codex 合并、请求次数、提示框溢出和窗口裁切；新增胶囊、紧凑、完整三种显示密度。",
+  version: "0.11.11",
+  title: "DeepSeek Harness 实时代理版",
+  download_href: `${cloudBaseUrl}/v1/download/latest?source=github-pages`,
+  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.11/TokenManager_0.11.11_x64-portable.exe",
+  file_name: "TokenManager_0.11.11_x64-setup.exe",
+  size_bytes: 11144767,
+  sha256: "1D1375A7E157FE999331DC325AE508FE9B9CE77C252FB0636D41D6944D83AC56",
+  published_at: "2026-08-14T03:33:52.000Z",
+  notes: "新增 DeepSeek Harness 本地代理，明确区分代理监听、Agent 接入和真实请求捕获，修复余额变化却没有 Token 数据时的误导状态。",
 };
 
 const versionNumber = (value) => String(value || "").split(".").reduce((total, part) => total * 1000 + (Number.parseInt(part, 10) || 0), 0);
@@ -68,13 +68,14 @@ export function App() {
   }, []);
   const releaseSize = release.size_bytes ? `${(release.size_bytes / 1048576).toFixed(2)} MB` : "Windows 10 / 11 64 位";
   const releaseDate = new Date(release.published_at).toLocaleDateString("zh-CN");
+  const trackedDownloadHref = `${cloudBaseUrl}/v1/download/latest?source=github-pages`;
 
   return (
     <div className="site-shell">
       <header className={`topbar ${scrolled ? "is-scrolled" : ""}`}>
         <a className="brand" href="#top" aria-label="Token Manager 首页"><img src={publicUrl("images/token-manager-icon.png")} alt="" /><span>Token Manager</span></a>
         <nav aria-label="主导航"><a href="#features">功能</a><a href="#providers">平台</a><a href="#privacy">隐私</a><a href="#faq">常见问题</a></nav>
-        <DownloadButton href={release.download_href} className="top-download">免费下载</DownloadButton>
+        <DownloadButton href={trackedDownloadHref} className="top-download">免费下载</DownloadButton>
       </header>
 
       <main id="top">
@@ -84,7 +85,7 @@ export function App() {
             <h1 id="hero-title"><span>Token</span><span>Manager</span></h1>
             <p className="hero-lead">{siteContent.hero_lead}</p>
             <p className="hero-description">{siteContent.hero_description}</p>
-            <div className="hero-actions"><DownloadButton href={release.download_href}>免费下载 v{release.version} · {release.title}</DownloadButton><a className="text-link" href={release.portable_href}>便携版</a><a className="text-link" href="#features">查看全部功能</a></div>
+            <div className="hero-actions"><DownloadButton href={trackedDownloadHref}>免费下载 v{release.version} · {release.title}</DownloadButton><a className="text-link" href={release.portable_href}>便携版</a><a className="text-link" href="#features">查看全部功能</a></div>
             <p className="platform-note">{siteContent.privacy_note}</p>
           </div>
           <figure className="product-stage glass-panel">
@@ -104,7 +105,7 @@ export function App() {
           <FeatureRow number="03 / LIVE MONITORING" title="代理启动不等于接入成功，状态会说清楚。" image={publicUrl("images/floating-window.png")} alt="Token Manager 分类悬浮窗" bullets={["OpenAI 与 Anthropic 兼容入口", "OpenCode API 代理与本地 JSON 双数据源", "请求结束后立即刷新，30 秒完整同步", "流式 usage、缓存命中与请求次数落库"]}>选择账户后可一键启动本机代理并接入常见调用工具；OpenCode 还可直接读取本地 JSON/JSONL 用量记录。界面会区分“已启动”“等待调用”“正在接收”，让不同模型的 Token 与余额变化有据可查。</FeatureRow>
           <FeatureRow reverse number="04 / LIQUID GLASS" title="真正可调的液态玻璃，不只是模糊背景。" image={publicUrl("images/settings-liquid-glass.png")} alt="Token Manager 液态玻璃主题和扭曲控制" bullets={["透明白与深色玻璃全局同步", "图片与最大 1GB 视频壁纸", "扭曲、边缘弯折、放大与色散可调", "十套图表配色、主题微光和动效开关"]}>WebGL 折射、CSS 安全降级与统一圆角材质覆盖主界面、侧边栏和悬浮窗。设置会实时预览并持久保存，重启后继续使用。</FeatureRow>
           <FeatureRow number="05 / DASHBOARDS" title="卡片随你排，简单模式和高级模式随时切换。" image={publicUrl("images/dashboard.png")} alt="Token Manager 自定义模型仪表盘" bullets={["每个账户与模型拥有独立仪表盘", "卡片拖拽排序并自动补齐空位", "Token、请求、缓存、消费与余额图表", "今日、7 天、30 天切换与悬停详情"]}>图表优先、余额下置，所有卡片可在限定网格内拖拽。主界面和悬浮窗共享自定义逻辑，并为无数据状态提供清晰占位。</FeatureRow>
-          <FeatureRow reverse number="06 / FLOATING WINDOW" title="桌面上也能看懂，不再是一块白色方框。" image={publicUrl("images/floating-window.png")} alt="带原生圆角裁切的 Token Manager 悬浮窗" bullets={["胶囊、紧凑、完整三种显示密度", "Win32 原生圆角区域与八方向缩放", "全模型图表合并 Codex 独立数据链路", "悬停查看每日 Token、请求、缓存和消费"]}>v0.11.2 重做完整模式的数据图表和 Agent 明细，统一真实来源、更新时间与空状态。悬浮窗永久保持交互，尺寸按显示密度设置安全下限，避免图表被裁切或四角残留方框。</FeatureRow>
+          <FeatureRow reverse number="06 / LOCAL AGENTS" title="DeepSeek Harness 也能一键进入本地监控链路。" image={publicUrl("images/floating-window.png")} alt="Token Manager 本地 Agent 与悬浮窗监控" bullets={["自动识别 DSH_HOME 与当前用户目录", "官方 llm-deepseek.baseURL 热更新接入", "监听、接入、捕获三阶段状态", "不读取 API Key、提示词或代码正文"]}>v0.11.11 新增 DeepSeek Harness 专属接入。只有真实请求经过 Token Manager 本机代理后才统计 Token；余额变化不能反推 Token 时会明确说明，不生成虚假数据。</FeatureRow>
           <FeatureRow number="07 / PROMPT CENTER" title="Prompt 不再散落，保存、检索、复用都在本机。" image={publicUrl("images/prompt-center.png")} alt="Token Manager Prompt 中心" bullets={["分类、收藏、最近与常用视图", "名称、标签、内容和模型联合检索", "发送前本地质量检查与优化建议", "模板、历史和统计不上传云端"]}>Prompt Center 把高频开发提示词变成可以持续积累的本地资产。支持编辑、收藏、复制、分享，以及针对结构、约束与输出格式的质量检查。</FeatureRow>
           <FeatureRow reverse number="08 / ARENA & REPORTS" title="能力排名、六维雷达和账单报告放在一起。" image={publicUrl("images/arena.png")} alt="Token Manager Arena 排行榜与六维能力雷达" bullets={["今日前十模型与官方来源日期", "六维能力雷达和名次变化", "按模型分类累计消费", "周报、月报与独立 Excel 账单"]}>Arena 在联网时检查公开榜单，离线时回退到最近缓存并标注日期。报告中心按单个模型汇总 Token、请求、缓存和金额，可分别导出 Excel。</FeatureRow>
         </section>
@@ -120,8 +121,8 @@ export function App() {
         </section>
 
         <section id="download" className="download-section section-pad">
-          <div className="download-main"><img src={publicUrl("images/token-manager-icon.png")} alt="Token Manager 图标" /><p className="eyebrow">TOKEN MANAGER v{release.version} · WINDOWS</p><h2>{siteContent.download_title}</h2><p>{release.notes || siteContent.download_description}</p><div className="hero-actions"><DownloadButton href={release.download_href}>下载 {release.version} 安装版 · {releaseSize}</DownloadButton><a className="text-link" href={release.portable_href}>下载便携版</a></div></div>
-          <aside className="download-details glass-panel"><h3>后台实时发行</h3><a href={release.download_href}><span>Token Manager v{release.version} · {release.title}</span><small>推荐 · Windows 10 / 11 64 位 · 下载次数会匿名计入维护后台</small></a><div className="checksum"><span>安装包 SHA-256</span><code>{release.sha256 ? `${release.sha256.slice(0,8)}…${release.sha256.slice(-8)}` : "发布后由后台展示"}</code></div><div className="checksum"><span>发布时间</span><code>{releaseDate}</code></div></aside>
+          <div className="download-main"><img src={publicUrl("images/token-manager-icon.png")} alt="Token Manager 图标" /><p className="eyebrow">TOKEN MANAGER v{release.version} · WINDOWS</p><h2>{siteContent.download_title}</h2><p>{release.notes || siteContent.download_description}</p><div className="hero-actions"><DownloadButton href={trackedDownloadHref}>下载 {release.version} 安装版 · {releaseSize}</DownloadButton><a className="text-link" href={release.portable_href}>下载便携版</a></div></div>
+          <aside className="download-details glass-panel"><h3>后台实时发行</h3><a href={trackedDownloadHref}><span>Token Manager v{release.version} · {release.title}</span><small>推荐 · Windows 10 / 11 64 位 · 下载次数会匿名计入维护后台</small></a><div className="checksum"><span>安装包 SHA-256</span><code>{release.sha256 ? `${release.sha256.slice(0,8)}…${release.sha256.slice(-8)}` : "发布后由后台展示"}</code></div><div className="checksum"><span>发布时间</span><code>{releaseDate}</code></div></aside>
         </section>
 
         <section id="faq" className="faq section-pad"><header className="section-heading"><p className="eyebrow">FAQ</p><h2>下载之前，你可能想知道。</h2></header><div className="faq-list">
