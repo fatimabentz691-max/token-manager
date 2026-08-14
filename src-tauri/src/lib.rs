@@ -302,6 +302,12 @@ struct ClientIntegrationBackup {
     claude_settings_path: Option<String>,
     claude_settings_original: Option<String>,
     claude_settings_existed: bool,
+    #[serde(default)]
+    deepseek_harness_settings_path: Option<String>,
+    #[serde(default)]
+    deepseek_harness_settings_original: Option<String>,
+    #[serde(default)]
+    deepseek_harness_settings_existed: bool,
     applied_at: String,
 }
 
@@ -2314,6 +2320,9 @@ fn connect_claude_code_blocking(
             claude_settings_path: Some(claude_path.to_string_lossy().into_owned()),
             claude_settings_original: fs::read_to_string(&claude_path).ok(),
             claude_settings_existed: claude_path.exists(),
+            deepseek_harness_settings_path: None,
+            deepseek_harness_settings_original: None,
+            deepseek_harness_settings_existed: false,
             applied_at: Utc::now().to_rfc3339(),
         };
         fs::write(
@@ -2367,6 +2376,127 @@ fn connect_claude_code_blocking(
     })
 }
 
+fn deepseek_harness_settings_path() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or("无法定位当前用户目录")?;
+    let dsh_home = std::env::var_os("DSH_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".dsh"));
+    Ok(dsh_home.join("settings.yaml"))
+}
+
+/// 只更新 DeepSeek Harness 官方 `llm-deepseek` 设置段。
+/// 保留用户的其他 YAML 内容、凭据引用和模型设置，不写入 API Key。
+fn patch_deepseek_harness_base_url(source: &str, local_url: &str) -> String {
+    let mut lines = source.lines().map(str::to_string).collect::<Vec<_>>();
+    let section_start = lines.iter().position(|line| {
+        line.trim() == "llm-deepseek:" && !line.starts_with(' ') && !line.starts_with('\t')
+    });
+    let replacement = format!("  baseURL: \"{local_url}\"");
+    if let Some(start) = section_start {
+        let end = lines
+            .iter()
+            .enumerate()
+            .skip(start + 1)
+            .find_map(|(index, line)| {
+                let trimmed = line.trim();
+                (!trimmed.is_empty()
+                    && !trimmed.starts_with('#')
+                    && !line.starts_with(' ')
+                    && !line.starts_with('\t'))
+                .then_some(index)
+            })
+            .unwrap_or(lines.len());
+        if let Some(index) = (start + 1..end).find(|index| {
+            lines[*index]
+                .trim_start()
+                .starts_with("baseURL:")
+        }) {
+            lines[index] = replacement;
+        } else {
+            lines.insert(start + 1, replacement);
+        }
+    } else {
+        if lines.last().is_some_and(|line| !line.trim().is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push("llm-deepseek:".into());
+        lines.push(replacement);
+    }
+    let mut result = lines.join("\n");
+    result.push('\n');
+    result
+}
+
+fn connect_deepseek_harness_blocking(
+    local_url: String,
+    account_name: String,
+    app: AppHandle,
+) -> Result<ClientIntegrationResult, String> {
+    if !is_token_manager_loopback(&local_url) {
+        return Err("DeepSeek Harness 只允许接入 Token Manager 的本机回环地址".into());
+    }
+    let settings_path = deepseek_harness_settings_path()?;
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建 DeepSeek Harness 配置目录：{error}"))?;
+    }
+    let backup_path = client_integration_backup_path(&app)?;
+    let mut backup = if backup_path.exists() {
+        serde_json::from_slice::<ClientIntegrationBackup>(
+            &fs::read(&backup_path).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("自动接入备份格式无效：{error}"))?
+    } else {
+        ClientIntegrationBackup {
+            openai_base_url: query_user_environment("OPENAI_BASE_URL"),
+            openai_api_base: query_user_environment("OPENAI_API_BASE"),
+            anthropic_base_url: query_user_environment("ANTHROPIC_BASE_URL"),
+            claude_settings_path: None,
+            claude_settings_original: None,
+            claude_settings_existed: false,
+            deepseek_harness_settings_path: None,
+            deepseek_harness_settings_original: None,
+            deepseek_harness_settings_existed: false,
+            applied_at: Utc::now().to_rfc3339(),
+        }
+    };
+    if backup.deepseek_harness_settings_path.is_none() {
+        backup.deepseek_harness_settings_path =
+            Some(settings_path.to_string_lossy().into_owned());
+        backup.deepseek_harness_settings_original = fs::read_to_string(&settings_path).ok();
+        backup.deepseek_harness_settings_existed = settings_path.exists();
+        fs::write(
+            &backup_path,
+            serde_json::to_vec_pretty(&backup).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("无法保存 DeepSeek Harness 配置备份：{error}"))?;
+    }
+
+    let original = fs::read_to_string(&settings_path).unwrap_or_default();
+    let patched = patch_deepseek_harness_base_url(&original, &local_url);
+    let temporary = settings_path.with_extension("yaml.token-manager.tmp");
+    fs::write(&temporary, patched.as_bytes())
+        .map_err(|error| format!("无法写入 DeepSeek Harness 临时配置：{error}"))?;
+    atomic_replace_file(&temporary, &settings_path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        format!("DeepSeek Harness 配置原子替换失败：{error}")
+    })?;
+    let verified = fs::read_to_string(&settings_path)
+        .map(|text| text.contains(&format!("baseURL: \"{local_url}\"")))
+        .unwrap_or(false);
+    if !verified {
+        return Err("DeepSeek Harness 配置写入后校验失败，已停止报告接入成功".into());
+    }
+    Ok(ClientIntegrationResult {
+        connected: true,
+        account_name,
+        openai_url: local_url,
+        anthropic_url: None,
+        changed: vec![format!("{} · llm-deepseek.baseURL", settings_path.display())],
+        restart_required: false,
+        detail: "DeepSeek Harness 已通过官方 llm-deepseek.baseURL 热更新接入；凭据仍由 Harness 自己管理，Token Manager 不读取或改写 API Key。".into(),
+    })
+}
+
 #[tauri::command]
 async fn connect_agent_proxy(
     agent_id: String,
@@ -2406,6 +2536,11 @@ fn connect_agent_proxy_blocking(
     match agent_id.as_str() {
             "claude-code" => connect_claude_code_blocking(
                 format!("http://127.0.0.1:{port}/anthropic"),
+                account_name,
+                task_app,
+            ),
+            "deepseek-harness" => connect_deepseek_harness_blocking(
+                format!("http://127.0.0.1:{port}/v1"),
                 account_name,
                 task_app,
             ),
@@ -2451,6 +2586,17 @@ fn restore_client_connection(app: AppHandle) -> Result<String, String> {
             }
             fs::write(path, original).map_err(|error| error.to_string())?;
         } else if !backup.claude_settings_existed && path.exists() {
+            fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+    }
+    if let Some(path) = backup.deepseek_harness_settings_path.as_deref() {
+        let path = PathBuf::from(path);
+        if let Some(original) = backup.deepseek_harness_settings_original {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            fs::write(path, original).map_err(|error| error.to_string())?;
+        } else if !backup.deepseek_harness_settings_existed && path.exists() {
             fs::remove_file(path).map_err(|error| error.to_string())?;
         }
     }
@@ -4718,6 +4864,24 @@ async fn fetch_arena_model_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn patches_only_deepseek_harness_base_url() {
+        let source = "theme: light\nllm-deepseek:\n  maxTokens: 4096\nother:\n  enabled: true\n";
+        let patched = patch_deepseek_harness_base_url(source, "http://127.0.0.1:18766/v1");
+        assert!(patched.contains("llm-deepseek:\n  baseURL: \"http://127.0.0.1:18766/v1\"\n  maxTokens: 4096"));
+        assert!(patched.contains("other:\n  enabled: true"));
+
+        let updated = patch_deepseek_harness_base_url(&patched, "http://127.0.0.1:18767/v1");
+        assert_eq!(updated.matches("baseURL:").count(), 1);
+        assert!(updated.contains("baseURL: \"http://127.0.0.1:18767/v1\""));
+    }
+
+    #[test]
+    fn appends_deepseek_harness_section_when_missing() {
+        let patched = patch_deepseek_harness_base_url("appearance: compact\n", "http://127.0.0.1:18766/v1");
+        assert!(patched.ends_with("llm-deepseek:\n  baseURL: \"http://127.0.0.1:18766/v1\"\n"));
+    }
 
     #[test]
     fn maps_arena_boards_and_official_providers() {

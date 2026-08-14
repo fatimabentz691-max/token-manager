@@ -93,6 +93,14 @@ const SPECS: &[AgentSpec] = &[
         proxy_protocol: Some("both"),
     },
     AgentSpec {
+        id: "deepseek-harness",
+        name: "DeepSeek Harness",
+        provider: "DeepSeek",
+        collector_kind: "jsonl",
+        capabilities: &["本地会话目录", "Token 元数据", "实时代理"],
+        proxy_protocol: Some("openai"),
+    },
+    AgentSpec {
         id: "cursor",
         name: "Cursor",
         provider: "Cursor",
@@ -349,6 +357,12 @@ fn candidate_templates(id: &str) -> Vec<(&'static str, &'static str)> {
             ("home-xdg", "%USERPROFILE%\\.local\\share\\opencode"),
             ("roaming", "%APPDATA%\\opencode"),
         ],
+        "deepseek-harness" => vec![
+            ("custom-sessions", "%DSH_HOME%\\sessions"),
+            ("home-sessions", "%USERPROFILE%\\.dsh\\sessions"),
+            ("custom-settings", "%DSH_HOME%\\settings.yaml"),
+            ("home-settings", "%USERPROFILE%\\.dsh\\settings.yaml"),
+        ],
         "cursor" => vec![
             ("workspace", "%APPDATA%\\Cursor\\User\\workspaceStorage"),
             ("global", "%APPDATA%\\Cursor\\User\\globalStorage"),
@@ -533,6 +547,12 @@ fn candidate_paths(id: &str) -> Vec<PathBuf> {
             home.join(".local").join("share").join("opencode"),
             roaming.join("opencode"),
         ],
+        "deepseek-harness" => {
+            let dsh_home = std::env::var_os("DSH_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".dsh"));
+            vec![dsh_home.join("sessions"), dsh_home.join("settings.yaml")]
+        }
         "cursor" => vec![
             roaming.join("Cursor").join("User").join("workspaceStorage"),
             roaming.join("Cursor").join("User").join("globalStorage"),
@@ -636,6 +656,7 @@ fn official_url(id: &str) -> &'static str {
     match id {
         "claude-code" => "https://github.com/anthropics/claude-code",
         "opencode" => "https://github.com/anomalyco/opencode",
+        "deepseek-harness" => "https://github.com/deepseek-ai/deepseek-harness",
         "cursor" => "https://www.cursor.com/",
         "github-copilot" => "https://github.com/features/copilot",
         "gemini-cli" => "https://github.com/google-gemini/gemini-cli",
@@ -667,6 +688,7 @@ fn official_url(id: &str) -> &'static str {
 fn schema_fingerprint(id: &str) -> &'static str {
     match id {
         "opencode" => "opencode.sqlite.message.parts.v1|opencode.jsonl.usage.v1",
+        "deepseek-harness" => "dsh.session.jsonl.v0|dsh.llm-deepseek.settings.v1",
         "github-copilot" => "copilot.otel.usage.v1|copilot.data.db.v1",
         "hermes" => "hermes.state.db.v1",
         "mimo-code" => "mimocode.sqlite.usage.v1",
@@ -690,7 +712,7 @@ fn support_state(id: &str, collector_kind: &str) -> &'static str {
         return "detected_only";
     }
     match id {
-        "claude-code" | "opencode" | "cursor" | "github-copilot" | "gemini-cli" | "cline"
+        "claude-code" | "opencode" | "deepseek-harness" | "cursor" | "github-copilot" | "gemini-cli" | "cline"
         | "kilo-code" | "kimi-cli" | "qwen-cli" | "openclaw" | "hermes" | "pi" | "zed" | "kiro"
         | "mimo-code" | "zcode" | "codebuddy" | "trae-agent" => "supported",
         _ => "experimental",
@@ -731,6 +753,8 @@ pub fn definitions() -> Vec<AgentConnectorDefinition> {
                 schema_version: 1,
                 detail: if item.id == "cursor" {
                     "Cursor 本地缓存只有在包含可靠用量字段时才会导入；不会把缺失字段显示为 0".into()
+                } else if item.id == "deepseek-harness" {
+                    "自动检测 DSH_HOME 或 ~/.dsh；原始 JSONL 可读取用量元数据，默认压缩会话优先通过实时代理精确统计。不会读取提示词、回复、代码或凭据".into()
                 } else {
                     "仅读取本地用量元数据，不读取提示词、回复或代码正文".into()
                 },
@@ -1597,6 +1621,12 @@ mod tests {
         assert!(definitions.iter().any(|item| item.id == "hermes"));
         assert!(definitions.iter().any(|item| item.id == "mimo-code"));
         assert!(definitions.iter().any(|item| item.id == "zcode"));
+        let harness = definitions
+            .iter()
+            .find(|item| item.id == "deepseek-harness")
+            .expect("DeepSeek Harness connector");
+        assert_eq!(harness.proxy_capability, "openai");
+        assert!(harness.path_specs.iter().any(|path| path.contains("DSH_HOME")));
         assert!(!definitions.iter().any(|item| item.id == "codex"));
     }
 

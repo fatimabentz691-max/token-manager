@@ -174,6 +174,8 @@ const lastProxyTraffic=ref<ProxyTrafficEvent|null>(null)
 const autoConnectBusy=ref(false)
 const autoConnectStatus=ref('')
 const autoConnectedAccountId=ref(localStorage.getItem('token-manager-auto-connected-account')||'')
+const autoConnectedAgentId=ref(localStorage.getItem('token-manager-auto-connected-agent')||'')
+const autoConnectVerified=ref(false)
 const unattributedSpend=ref('')
 const balanceSyncing=ref(false)
 const ccSwitch=ref<CcSwitchStatus>({installed:false,running:false,local_routing:false,detail:'正在检测…',checked_at:'',coexistence:'unknown',conflicting_variables:[],safe_repair_available:false})
@@ -369,10 +371,13 @@ onMounted(()=>{
    allProxyStatus.value=event.payload.detail
    if(event.payload.status==='completed'){
      proxyEndpoints.value=event.payload.endpoints
-     if(event.payload.agent_ids.length&&event.payload.stage==='ready'&&event.payload.endpoints[0]){
+      if(event.payload.agent_ids.length&&event.payload.stage==='ready'&&event.payload.endpoints[0]){
        autoConnectedAccountId.value=event.payload.endpoints[0].account_id
+       autoConnectedAgentId.value=event.payload.agent_ids[0]
+       autoConnectVerified.value=true
        localStorage.setItem('token-manager-auto-connected-account',autoConnectedAccountId.value)
-     }
+       localStorage.setItem('token-manager-auto-connected-agent',autoConnectedAgentId.value)
+      }
    }
  }).then(unlisten=>{unlistenProxyJob=unlisten})
  void listen<ProxyTrafficEvent>('proxy-request-started',event=>{
@@ -410,14 +415,15 @@ const totalCost=computed(()=>usage.value.reduce((s,x)=>s+x.cost,0))
 const selectedDashboardDef=computed(()=>modelDashboards.value.find(item=>item.key===selectedDashboard.value))
 const combinedUsage=computed(()=>[...usage.value,...claudeUsage.value])
 const proxyRecentlyActive=computed(()=>Boolean(proxyEndpoints.value.length&&lastProxyRequestAt.value&&now.value-lastProxyRequestAt.value<90_000))
-const clientIntegrationConnected=computed(()=>Boolean(autoConnectedAccountId.value&&proxyEndpoints.value.some(endpoint=>endpoint.account_id===autoConnectedAccountId.value)))
-const proxyConnectionLabel=computed(()=>proxyRecentlyActive.value?'正在接收':clientIntegrationConnected.value?'已自动接入':proxyEndpoints.value.length?'可自动接入':'未启用')
+const clientIntegrationConnected=computed(()=>Boolean(autoConnectVerified.value&&autoConnectedAgentId.value&&autoConnectedAccountId.value&&proxyEndpoints.value.some(endpoint=>endpoint.account_id===autoConnectedAccountId.value)))
+const connectedAgentName=computed(()=>localAgents.value.find(item=>item.id===autoConnectedAgentId.value)?.name||'当前 Agent')
+const proxyConnectionLabel=computed(()=>proxyRecentlyActive.value?'已捕获请求':clientIntegrationConnected.value?'Agent 已接入':proxyEndpoints.value.length?'代理监听中':'未启用')
 const proxyConnectionDetail=computed(()=>proxyRecentlyActive.value&&lastProxyTraffic.value
  ? `${lastProxyTraffic.value.provider} · ${lastProxyTraffic.value.model} · 请求已进入本机代理`
  : clientIntegrationConnected.value
- ? autoConnectStatus.value||'所选 Agent 已指向本机代理；没有改写其他工具的全局连接配置。'
+ ? autoConnectStatus.value||`${connectedAgentName.value} 已指向本机代理，正在等待首个真实请求。`
  : proxyEndpoints.value.length
- ? '代理端口已经监听，点击“自动接入”即可配置常见 Code、SDK 与 Claude Code。'
+ ? '本机端口已经监听，但尚未确认任何 Agent 的配置写入；此状态不会再显示成“已接入”。'
  : '开启后会生成本机代理地址并自动接入常见开发工具。')
 const commandActivities=computed(()=>combinedUsage.value
  .map(item=>({id:item.id,provider:item.provider,model:item.model,tokens:item.input+item.output,cost:item.cost,at:item.at}))
@@ -773,18 +779,21 @@ async function repairCcSwitch(){
 async function refreshBalanceData(sync=true){
  if(balanceSyncing.value)return
  balanceSyncing.value=true
- const previous=new Map(accountBalances.value.filter(item=>item.provider==='DeepSeek').map(item=>[item.account_id,item.total_balance]))
+ const previous=new Map(accountBalances.value.filter(item=>item.provider==='DeepSeek').map(item=>[item.account_id,item]))
  try{
   const next=sync?await invoke<AccountBalance[]>('sync_account_balances'):await invoke<AccountBalance[]>('list_account_balances')
   accountBalances.value=next
   balanceError.value=''
   for(const row of next.filter(item=>item.provider==='DeepSeek')){
    const before=previous.get(row.account_id)
-   if(before!==undefined&&row.total_balance<before-.000001){
-    const drop=before-row.total_balance
-    const sameAccountRequest=lastProxyTraffic.value?.account_id===row.account_id&&Boolean(lastProxyRequestAt.value)&&Date.now()-lastProxyRequestAt.value<=20_000
+   if(before&&row.total_balance<before.total_balance-.000001){
+    const drop=before.total_balance-row.total_balance
+    // DeepSeek 余额接口可能晚于流式请求落库；保留十分钟关联窗口，避免真实代理请求被误报成“未捕获”。
+    const sameAccountRequest=lastProxyTraffic.value?.account_id===row.account_id&&Boolean(lastProxyRequestAt.value)&&Date.now()-lastProxyRequestAt.value<=600_000
     if(!sameAccountRequest){
-     unattributedSpend.value=`DeepSeek 余额减少 ¥${drop.toFixed(4)}，但没有请求进入本机代理；本次 Token 无法反推，请点击“自动接入”后重启调用工具。`
+     unattributedSpend.value=clientIntegrationConnected.value
+      ? `DeepSeek 余额减少 ¥${drop.toFixed(4)}，但 ${connectedAgentName.value} 尚未产生可关联的代理请求。请确认 Harness 当前使用 llm-deepseek provider；本次 Token 不会按余额倒推。`
+      : `DeepSeek 余额减少 ¥${drop.toFixed(4)}，但当前只有代理端口在监听，尚未确认 Agent 接入。请点击“自动接入”或在 DeepSeek Harness 卡片中接入代理；本次 Token 不会按余额倒推。`
     }else{
      unattributedSpend.value=''
     }
@@ -916,20 +925,33 @@ async function autoConnectEndpoint(endpoint:ProxyEndpoint,agentId?:string){
  try{
   if(!agentId)throw new Error('请先选择需要接入的本地 Agent，避免改写所有工具的全局连接配置')
   const result=await invoke<ClientIntegrationResult>('connect_agent_proxy',{agentId,endpointId:endpoint.account_id})
+  if(!result.connected)throw new Error(result.detail||'Agent 配置写入后未通过校验')
   autoConnectedAccountId.value=endpoint.account_id
+  autoConnectedAgentId.value=agentId
+  autoConnectVerified.value=true
   localStorage.setItem('token-manager-auto-connected-account',endpoint.account_id)
+  localStorage.setItem('token-manager-auto-connected-agent',agentId)
   autoConnectStatus.value=result.detail
-  allProxyStatus.value=`${endpoint.name} 已自动接入 · 重启正在运行的调用工具后生效`
+  allProxyStatus.value=`${localAgents.value.find(item=>item.id===agentId)?.name||agentId} 已接入 ${endpoint.name}${result.restart_required?' · 重启调用工具后生效':' · 已热更新生效'}`
+  unattributedSpend.value=''
   successBurstKey.value++
  }catch(error){
+  autoConnectVerified.value=false
   autoConnectStatus.value=`自动接入失败：${String(error)}`
   allProxyStatus.value=autoConnectStatus.value
  }finally{autoConnectBusy.value=false}
 }
-async function autoConnectPreferred(agentId=selectedDashboardDef.value?.agentId){
- if(!agentId){allProxyStatus.value='代理端口已就绪 · 请在本地 Agent 卡片中选择“接入代理”';return}
+function preferredAgentForEndpoint(endpoint?:ProxyEndpoint,requestedAgentId?:string){
+ if(requestedAgentId)return requestedAgentId
+ if(selectedDashboardDef.value?.agentId)return selectedDashboardDef.value.agentId
+ if(endpoint?.provider==='DeepSeek'&&localAgents.value.some(item=>item.id==='deepseek-harness'&&item.detected))return 'deepseek-harness'
+ return ''
+}
+async function autoConnectPreferred(requestedAgentId?:string){
  const endpoint=proxyEndpoints.value.find(item=>item.account_id===activeAccountId.value)||proxyEndpoints.value[0]
  if(!endpoint){await startAllProxies();return}
+ const agentId=preferredAgentForEndpoint(endpoint,requestedAgentId)
+ if(!agentId){allProxyStatus.value='代理仅处于监听状态 · 请在“账户与模型”的本地 Agent 卡片中选择“接入代理”';return}
  await autoConnectEndpoint(endpoint,agentId)
 }
 async function restoreClientConnection(){
@@ -937,7 +959,10 @@ async function restoreClientConnection(){
  try{
   const message=await invoke<string>('restore_client_connection')
   autoConnectedAccountId.value=''
+  autoConnectedAgentId.value=''
+  autoConnectVerified.value=false
   localStorage.removeItem('token-manager-auto-connected-account')
+  localStorage.removeItem('token-manager-auto-connected-agent')
   autoConnectStatus.value=message
   allProxyStatus.value=message
  }catch(error){autoConnectStatus.value=`恢复失败：${String(error)}`}
@@ -950,11 +975,13 @@ async function monitorPrimaryAction(){
 }
 async function startAllProxies(requestedAgentId?:string){
  allProxyStatus.value='正在建立本地数据通道…'
+ autoConnectVerified.value=false
  try{
   await refreshAccounts()
   const selectedAccountId=activeAccountId.value||savedAccounts.value[0]?.id
   if(!selectedAccountId)throw new Error('请先添加并选择一个 API 账户')
-  const selectedAgentId=typeof requestedAgentId==='string'?requestedAgentId:selectedDashboardDef.value?.agentId
+  const selectedAccount=savedAccounts.value.find(item=>item.id===selectedAccountId)
+  const selectedAgentId=preferredAgentForEndpoint(selectedAccount?{account_id:selectedAccount.id,provider:selectedAccount.provider,name:selectedAccount.name,local_url:'',port:0}:undefined,requestedAgentId)
   const job=await invoke<ProxyJob>('start_proxy_group',{accountIds:[selectedAccountId],agentIds:selectedAgentId?[selectedAgentId]:[]})
   lastProxyRequestAt.value=0
   lastProxyTraffic.value=null
@@ -1264,17 +1291,17 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
    </div>
   </aside>
    <section class="content">
-      <header><div class="header-copy"><h1>{{ {command:'AI 控制中心',dashboard:'模型用量',prompts:'Prompt 中心',arena:'Arena 排行榜',accounts:'账户与模型',reports:'报告中心',floating:'悬浮窗',settings:'设置'}[page] }}</h1><p role="status" aria-live="polite">电脑时间 {{currentTimeText}} · 上次刷新 {{refreshedText}} · {{nextRefreshText}}</p></div><div class="header-actions"><SuccessBurst :trigger="successBurstKey" /><ThemeSwitcher /><button class="health-launch" :class="{warning:syncHealthItems.some(item=>item.status==='error')}" type="button" title="查看所有数据源的同步状态" aria-label="打开监控健康中心" @click="syncHealthOpen=true"><span><i aria-hidden="true"></i><b>监控健康</b></span><small>{{syncHealthItems.filter(item=>item.status==='healthy').length}}/{{syncHealthItems.length||0}} 正常</small></button><button class="monitor-launch" :class="{running:proxyEndpoints.length,receiving:proxyRecentlyActive}" :disabled="autoConnectBusy" @click="monitorPrimaryAction"><ProxyGatewayIcon /><span class="monitor-launch-copy"><b>{{proxyRecentlyActive?'正在监控':autoConnectBusy?'正在自动接入':clientIntegrationConnected?'已自动接入':proxyEndpoints.length?'自动接入':'开启并自动接入'}}</b><small>{{proxyRecentlyActive?`${lastProxyTraffic?.provider} · ${lastProxyTraffic?.model}`:clientIntegrationConnected?'重启调用工具后自动统计':proxyEndpoints.length?'无需手动填写 Base URL':'本机转发 · 自动配置'}}</small></span></button><button class="sync" :class="{loading:isSyncing}" :disabled="isSyncing" @click="syncData(true)"><span class="sync-icon" aria-hidden="true">↻</span>{{isSyncing?'正在同步…':'同步数据'}}</button></div></header>
+      <header><div class="header-copy"><h1>{{ {command:'AI 控制中心',dashboard:'模型用量',prompts:'Prompt 中心',arena:'Arena 排行榜',accounts:'账户与模型',reports:'报告中心',floating:'悬浮窗',settings:'设置'}[page] }}</h1><p role="status" aria-live="polite">电脑时间 {{currentTimeText}} · 上次刷新 {{refreshedText}} · {{nextRefreshText}}</p></div><div class="header-actions"><SuccessBurst :trigger="successBurstKey" /><ThemeSwitcher /><button class="health-launch" :class="{warning:syncHealthItems.some(item=>item.status==='error')}" type="button" title="查看所有数据源的同步状态" aria-label="打开监控健康中心" @click="syncHealthOpen=true"><span><i aria-hidden="true"></i><b>监控健康</b></span><small>{{syncHealthItems.filter(item=>item.status==='healthy').length}}/{{syncHealthItems.length||0}} 正常</small></button><button class="monitor-launch" :class="{running:proxyEndpoints.length,receiving:proxyRecentlyActive}" :disabled="autoConnectBusy" @click="monitorPrimaryAction"><ProxyGatewayIcon /><span class="monitor-launch-copy"><b>{{proxyRecentlyActive?'正在监控':autoConnectBusy?'正在自动接入':clientIntegrationConnected?'Agent 已接入':proxyEndpoints.length?'自动接入 Agent':'开启并自动接入'}}</b><small>{{proxyRecentlyActive?`${lastProxyTraffic?.provider} · ${lastProxyTraffic?.model}`:clientIntegrationConnected?`${connectedAgentName} · 等待首个请求`:proxyEndpoints.length?'端口已监听 · 尚未接入 Agent':'本机转发 · 自动配置'}}</small></span></button><button class="sync" :class="{loading:isSyncing}" :disabled="isSyncing" @click="syncData(true)"><span class="sync-icon" aria-hidden="true">↻</span>{{isSyncing?'正在同步…':'同步数据'}}</button></div></header>
     <section v-if="page==='dashboard'||page==='accounts'" class="monitor-status-bar" :class="{'is-live':proxyRecentlyActive||ccSwitch.local_routing,'is-proxy-live':proxyRecentlyActive,'is-proxy-ready':proxyEndpoints.length&&!proxyRecentlyActive,'is-cc-live':ccSwitch.local_routing}" role="status" aria-live="polite">
-     <div class="monitor-status-brand"><span class="monitor-status-icon"><ProxyGatewayIcon /></span><SupplementalHelp help-id="monitor-route-detail" kind="status" :detail="allProxyStatus||proxyConnectionDetail"><span class="monitor-status-copy"><small>实时监控链路</small><b>{{proxyRecentlyActive?'API 用量正在实时接收':clientIntegrationConnected?'调用工具已自动接入':proxyEndpoints.length?'代理已启动，可自动接入':ccSwitch.local_routing?'CC Switch 路由已接管':'等待建立数据通道'}}</b></span></SupplementalHelp></div>
+     <div class="monitor-status-brand"><span class="monitor-status-icon"><ProxyGatewayIcon /></span><SupplementalHelp help-id="monitor-route-detail" kind="status" :detail="allProxyStatus||proxyConnectionDetail"><span class="monitor-status-copy"><small>实时监控链路</small><b>{{proxyRecentlyActive?'API 用量正在实时接收':clientIntegrationConnected?`${connectedAgentName} 已接入，等待请求`:proxyEndpoints.length?'代理端口监听中，尚未接入 Agent':ccSwitch.local_routing?'CC Switch 路由已接管':'等待建立数据通道'}}</b></span></SupplementalHelp></div>
     <div class="monitor-status-signals">
      <span class="monitor-signal" :class="{active:proxyRecentlyActive,ready:proxyEndpoints.length&&!proxyRecentlyActive}"><i></i><span><small>API 代理</small><b>{{proxyConnectionLabel}}</b></span></span>
      <span class="monitor-signal" :class="{active:ccSwitch.local_routing}"><img :src="ccSwitchOfficialLogo" alt="CC Switch"><span><small>CC Switch</small><b>{{ccSwitch.local_routing?'路由已接管':ccSwitch.running?'进程运行':ccSwitch.installed?'待启动':'未安装'}}</b></span></span>
     </div>
-    <button class="monitor-status-action" :disabled="isSyncing||autoConnectBusy" @click="monitorPrimaryAction">{{autoConnectBusy?'接入中…':!proxyEndpoints.length?'开启并自动接入':!proxyRecentlyActive?'自动接入':'立即刷新'}}</button>
+    <button class="monitor-status-action" :disabled="isSyncing||autoConnectBusy" @click="monitorPrimaryAction">{{autoConnectBusy?'接入中…':!proxyEndpoints.length?'开启并自动接入':!proxyRecentlyActive?(clientIntegrationConnected?'重新校验接入':'自动接入 Agent'):'立即刷新'}}</button>
     <div v-if="unattributedSpend" class="proxy-unattributed-alert">{{unattributedSpend}}</div>
     <div v-if="ccSwitch.conflicting_variables.length" class="cc-conflict-alert"><span><b>检测到旧版全局代理冲突</b><small>{{ccSwitch.conflicting_variables.join('、')}} · CC Switch 共存模式不会覆盖全局环境</small></span><button v-if="ccSwitch.safe_repair_available" type="button" @click="repairCcSwitch">一键安全修复</button><em v-else>请先查看冲突项，软件不会自动删除</em></div>
-    <details v-if="proxyEndpoints.length" class="monitor-endpoints"><summary>Agent 接入账户与高级手动地址</summary><div><article v-for="endpoint in proxyEndpoints" :key="endpoint.local_url"><span><b>{{endpoint.name}}</b><small>OpenAI 兼容 · {{endpoint.account_id===autoConnectedAccountId?'当前 Agent 已接入':'可选择接入'}}</small><code>{{endpoint.local_url}}</code></span><button type="button" :disabled="autoConnectBusy||!selectedDashboardDef?.agentId" @click="autoConnectEndpoint(endpoint,selectedDashboardDef?.agentId)">接入当前 Agent</button><button type="button" @click="copyProxyUrl(endpoint.local_url)">复制</button><template v-if="endpoint.anthropic_url"><span><small>Claude Code / Anthropic 兼容</small><code>{{endpoint.anthropic_url}}</code></span><button type="button" @click="copyProxyUrl(endpoint.anthropic_url)">复制</button></template></article></div></details>
+    <details v-if="proxyEndpoints.length" class="monitor-endpoints"><summary>Agent 接入账户与高级手动地址</summary><div><article v-for="endpoint in proxyEndpoints" :key="endpoint.local_url"><span><b>{{endpoint.name}}</b><small>OpenAI 兼容 · {{clientIntegrationConnected&&endpoint.account_id===autoConnectedAccountId?`${connectedAgentName} 已验证接入`:'仅监听，尚未验证 Agent 配置'}}</small><code>{{endpoint.local_url}}</code></span><button type="button" :disabled="autoConnectBusy||!selectedDashboardDef?.agentId" @click="autoConnectEndpoint(endpoint,selectedDashboardDef?.agentId)">接入当前 Agent</button><button type="button" @click="copyProxyUrl(endpoint.local_url)">复制</button><template v-if="endpoint.anthropic_url"><span><small>Claude Code / Anthropic 兼容</small><code>{{endpoint.anthropic_url}}</code></span><button type="button" @click="copyProxyUrl(endpoint.anthropic_url)">复制</button></template></article></div></details>
    </section>
    <section v-if="activeAnnouncement" class="remote-content remote-announcement" aria-label="软件公告">
     <div class="remote-content-badge">公告</div><div class="remote-content-copy"><b>{{activeAnnouncement.title}}</b><p>{{activeAnnouncement.body}}</p></div><button v-if="activeAnnouncement.action_url" class="remote-content-action" @click="openRemoteItem(activeAnnouncement)">{{activeAnnouncement.action_label||'查看详情'}}</button><button class="remote-content-close" aria-label="关闭公告" title="关闭公告" @click="dismissRemoteItem(activeAnnouncement.id)">×</button>

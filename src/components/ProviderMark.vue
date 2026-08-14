@@ -67,6 +67,7 @@ const logos: Record<string, LogoDefinition> = {
   '通义百炼': { src: qwen },
   '智谱 AI': { src: zhipu },
   DeepSeek: { src: deepseek },
+  'DeepSeek Harness': { src: deepseek },
   Kimi: { src: kimi },
   '讯飞星火': { src: spark },
   MiniMax: { src: minimax },
