@@ -23,15 +23,15 @@ const fallbackSiteContent = {
   privacy_note: "本地解析 · 密钥加密 · 不上传代码与日志",
 };
 const fallbackRelease = {
-  version: "0.11.12",
-  title: "DeepSeek Harness 用量修复版",
+  version: "0.11.13",
+  title: "更新公告与 Harness 仪表盘修复版",
   download_href: `${cloudBaseUrl}/v1/download/latest?source=github-pages`,
-  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.12/TokenManager_0.11.12_x64-portable.exe",
-  file_name: "Token.Manager_0.11.12_x64-setup.exe",
-  size_bytes: 11146306,
-  sha256: "3F5390750FE3AF91C4D21BDCD34532AEB87BC15824DB59F02C762EB9BEB7B2CE",
-  published_at: "2026-08-14T04:46:07.000Z",
-  notes: "修复 DeepSeek Harness 本地总览不显示代理拦截 Token 与请求表格的问题；已接入本机代理时合并该接入账户的代理实测记录（真实 usage 优先），仅合并用户明确接入的账户。",
+  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.13/TokenManager_0.11.13_x64-portable.exe",
+  file_name: "Token.Manager_0.11.13_x64-setup.exe",
+  size_bytes: 11144332,
+  sha256: "05105FDFEAADCB9C77C682CE93A6A3C078D63A51461C91EE3297A3D42A01E2B1",
+  published_at: "2026-08-14T05:40:00.000Z",
+  notes: "更新公告改为与软件公告同位置的内容区内嵌横幅，修复液态玻璃主题下被左侧菜单栏遮挡的问题；同时包含 DeepSeek Harness 仪表盘修复（本地总览合并本机代理拦截用量）。",
 };
 
 const versionNumber = (value) => String(value || "").split(".").reduce((total, part) => total * 1000 + (Number.parseInt(part, 10) || 0), 0);
