@@ -23,15 +23,15 @@ const fallbackSiteContent = {
   privacy_note: "本地解析 · 密钥加密 · 不上传代码与日志",
 };
 const fallbackRelease = {
-  version: "0.11.11",
-  title: "DeepSeek Harness 实时代理版",
+  version: "0.11.12",
+  title: "DeepSeek Harness 用量修复版",
   download_href: `${cloudBaseUrl}/v1/download/latest?source=github-pages`,
-  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.11/TokenManager_0.11.11_x64-portable.exe",
-  file_name: "TokenManager_0.11.11_x64-setup.exe",
-  size_bytes: 11144767,
-  sha256: "1D1375A7E157FE999331DC325AE508FE9B9CE77C252FB0636D41D6944D83AC56",
-  published_at: "2026-08-14T03:33:52.000Z",
-  notes: "新增 DeepSeek Harness 本地代理，明确区分代理监听、Agent 接入和真实请求捕获，修复余额变化却没有 Token 数据时的误导状态。",
+  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.12/TokenManager_0.11.12_x64-portable.exe",
+  file_name: "Token.Manager_0.11.12_x64-setup.exe",
+  size_bytes: 11146306,
+  sha256: "3F5390750FE3AF91C4D21BDCD34532AEB87BC15824DB59F02C762EB9BEB7B2CE",
+  published_at: "2026-08-14T04:46:07.000Z",
+  notes: "修复 DeepSeek Harness 本地总览不显示代理拦截 Token 与请求表格的问题；已接入本机代理时合并该接入账户的代理实测记录（真实 usage 优先），仅合并用户明确接入的账户。",
 };
 
 const versionNumber = (value) => String(value || "").split(".").reduce((total, part) => total * 1000 + (Number.parseInt(part, 10) || 0), 0);
