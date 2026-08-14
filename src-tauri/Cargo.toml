@@ -1,6 +1,6 @@
 [package]
 name = "token-manager"
-version = "0.11.11"
+version = "0.11.12"
 description = "本地 AI Token 用量监控工具"
 edition = "2021"
 default-run = "token-manager"

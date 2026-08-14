@@ -428,14 +428,25 @@ const proxyConnectionDetail=computed(()=>proxyRecentlyActive.value&&lastProxyTra
 const commandActivities=computed(()=>combinedUsage.value
  .map(item=>({id:item.id,provider:item.provider,model:item.model,tokens:item.input+item.output,cost:item.cost,at:item.at}))
  .sort((a,b)=>new Date(b.at).getTime()-new Date(a.at).getTime()))
+/** 单个本地 Agent 仪表盘的真实用量行。
+ *  Agent 已通过本机代理接入时，合并该接入账户的代理实测记录（代理返回的真实 usage 优先），
+ *  只合并用户明确接入的账户，不混入其他账户、Agent 或 Codex 数据。 */
+function usageRowsForDashboard(target:ModelDashboard):Usage[]{
+ let rows=usage.value.filter(item=>item.source_id===target.sourceId)
+ if(target.agentId&&target.agentId===autoConnectedAgentId.value&&autoConnectedAccountId.value){
+  rows=[...rows,...usage.value.filter(item=>item.source_kind==='local_proxy'&&item.account_id===autoConnectedAccountId.value)]
+ }
+ if(target.kind==='local_agent_model')rows=rows.filter(item=>item.model===target.model)
+ return rows.sort((a,b)=>new Date(b.at).getTime()-new Date(a.at).getTime())
+}
+const dashboardProxyMerged=computed(()=>{const target=selectedDashboardDef.value;return Boolean(target?.agentId&&target.agentId===autoConnectedAgentId.value&&autoConnectedAccountId.value)})
 const dashboardUsage=computed(()=>{
  if(selectedDashboard.value==='__all__')return combinedUsage.value
  if(selectedDashboard.value==='__codex__')return[]
  if(selectedDashboard.value==='__claude__')return claudeUsage.value
  const target=selectedDashboardDef.value
  if(!target)return[]
- if(target.kind==='local_agent')return usage.value.filter(item=>item.source_id===target.sourceId)
- if(target.kind==='local_agent_model')return usage.value.filter(item=>item.source_id===target.sourceId&&item.model===target.model)
+ if(target.kind==='local_agent'||target.kind==='local_agent_model')return usageRowsForDashboard(target)
  return usage.value.filter(item=>item.account_id===target.accountId&&item.model===target.model)
 })
 const dashboardSourceMeta=computed<{kind:UsageSourceKind;accuracy:UsageAccuracy;collectedAt:string}>(()=>{
@@ -454,7 +465,9 @@ const dashboardAdvice=computed(()=>selectedDashboard.value==='__codex__'
  : selectedDashboard.value==='__all__'
  ? ['这里汇总所有已接入模型，可通过上方仪表盘标签查看单个模型。','独立模型视图中的数字、图表、调用记录和提示均不会混入其他模型。']
  : selectedDashboardDef.value?.kind==='local_agent'||selectedDashboardDef.value?.kind==='local_agent_model'
- ? [`数据只来自 ${selectedDashboardDef.value.label} 对应的本地数据源，不读取提示词、回复正文、代码或认证信息。`,`当前页面按 source_id${selectedDashboardDef.value.kind==='local_agent_model'?' 与模型':' '}隔离；无真实记录时不会生成模拟图表。`]
+  ? dashboardProxyMerged.value
+    ? [`本地元数据与已接入账户的本机代理实测已合并展示；代理返回的真实 usage 优先，不读取提示词、回复正文、代码或认证信息。`,`仅合并你明确接入当前 Agent 的账户，不会混入其他账户、Agent 或 Codex 数据；无真实记录时不会生成模拟图表。`]
+     : [`数据只来自 ${selectedDashboardDef.value.label} 对应的本地数据源，不读取提示词、回复正文、代码或认证信息。`,`当前页面按 source_id${selectedDashboardDef.value.kind==='local_agent_model'?' 与模型':' '}隔离；无真实记录时不会生成模拟图表。`]
  : selectedDashboardDef.value?.provider==='OpenCode Go'
   ? ['支持 API Key 本机代理和 OpenCode 本地 JSON 两种监测方式；JSON 只提取模型、时间、Token、缓存和成本，不读取会话正文。','官方公开接口未提供套餐剩余百分比；额度卡仅展示本机已观测消耗，官方精确值请以 OpenCode 控制台为准。']
  : dashboardUsage.value.length
@@ -597,11 +610,11 @@ const floatingTodayCalls=computed(()=>selectedDashboard.value==='__all__'?todayC
 function countdownTo(timestamp:number){let seconds=Math.max(0,Math.floor(timestamp-now.value/1000));const days=Math.floor(seconds/86_400);seconds%=86_400;const hours=Math.floor(seconds/3600);seconds%=3600;const minutes=Math.floor(seconds/60);const tail=`${String(seconds%60).padStart(2,'0')} 秒`;return days?`${days} 天 ${hours} 小时 ${minutes} 分 ${tail}`:`${hours} 小时 ${minutes} 分 ${tail}`}
 const codex5hResetText=computed(()=>codexQuota.value?.five_hour?.resets_at?countdownTo(codexQuota.value.five_hour.resets_at):'等待客户端下发')
 const codex7dResetText=computed(()=>{if(codexQuota.value?.seven_day?.resets_at)return countdownTo(codexQuota.value.seven_day.resets_at);const cutoff=now.value/1000-7*86_400;const oldest=codexSeries.value.filter(item=>item.at>=cutoff).sort((a,b)=>a.at-b.at)[0];return oldest?countdownTo(oldest.at+7*86_400):'暂无滚动记录'})
-const modelBalanceRows=computed(()=>modelDashboards.value.map(model=>{const balance=model.kind==='account_model'?accountBalances.value.find(item=>item.account_id===model.accountId&&item.currency==='CNY'):null;const rows=model.kind==='local_agent'?usage.value.filter(item=>item.source_id===model.sourceId):model.kind==='local_agent_model'?usage.value.filter(item=>item.source_id===model.sourceId&&item.model===model.model):usage.value.filter(item=>item.account_id===model.accountId&&item.model===model.model);const tokens=rows.reduce((sum,item)=>sum+item.input+item.output,0);return{key:model.key,label:model.label,value:balance?`¥${balance.total_balance.toFixed(2)}`:rows.length?`${tokens.toLocaleString()} tokens`:'暂无调用'}}).slice(0,4))
+const modelBalanceRows=computed(()=>modelDashboards.value.map(model=>{const balance=model.kind==='account_model'?accountBalances.value.find(item=>item.account_id===model.accountId&&item.currency==='CNY'):null;const rows=model.kind==='account_model'?usage.value.filter(item=>item.account_id===model.accountId&&item.model===model.model):usageRowsForDashboard(model);const tokens=rows.reduce((sum,item)=>sum+item.input+item.output,0);return{key:model.key,label:model.label,value:balance?`¥${balance.total_balance.toFixed(2)}`:rows.length?`${tokens.toLocaleString()} tokens`:'暂无调用'}}).slice(0,4))
 type FloatingDashboardKind='all'|'codex'|'claude'|'model'|'agent'
 interface FloatingDashboardRow {key:string;title:string;subtitle:string;provider:string;kind:FloatingDashboardKind;todayTokens:number;calls:number;ringPercent:number;ringLabel:string}
 function compactFloatingNumber(value:number){if(value>=1_000_000)return`${(value/1_000_000).toFixed(value>=10_000_000?0:1)}M`;if(value>=1_000)return`${(value/1_000).toFixed(value>=10_000?0:1)}K`;return value.toLocaleString()}
-function floatingUsageFor(key:string){if(key==='__all__')return combinedUsage.value;if(key==='__claude__')return claudeUsage.value;if(key==='__codex__')return[];const target=modelDashboards.value.find(item=>item.key===key);if(!target)return[];if(target.kind==='local_agent')return usage.value.filter(item=>item.source_id===target.sourceId);if(target.kind==='local_agent_model')return usage.value.filter(item=>item.source_id===target.sourceId&&item.model===target.model);return usage.value.filter(item=>item.account_id===target.accountId&&item.model===target.model)}
+function floatingUsageFor(key:string){if(key==='__all__')return combinedUsage.value;if(key==='__claude__')return claudeUsage.value;if(key==='__codex__')return[];const target=modelDashboards.value.find(item=>item.key===key);if(!target)return[];if(target.kind==='local_agent'||target.kind==='local_agent_model')return usageRowsForDashboard(target);return usage.value.filter(item=>item.account_id===target.accountId&&item.model===target.model)}
 function todayTokenFor(key:string){if(key==='__all__')return todayTotalTokens.value;if(key==='__codex__')return codexTodayTokens.value;return floatingUsageFor(key).filter(item=>localDayKey(new Date(item.at))===localDayKey(new Date(now.value))).reduce((sum,item)=>sum+item.input+item.output,0)}
 const floatingDashboardRows=computed<FloatingDashboardRow[]>(()=>{
  const definitions=[{key:'__all__',title:'全部模型',provider:'Token Manager',kind:'all' as const},{key:'__codex__',title:'Codex 专属',provider:'Codex',kind:'codex' as const},{key:'__claude__',title:'Claude Code 专属',provider:'Claude Code',kind:'claude' as const},...modelDashboards.value.map(item=>({key:item.key,title:item.kind==='local_agent'?item.label:item.model,provider:item.provider,kind:(item.kind==='account_model'?'model':'agent') as 'model'|'agent'}))]
