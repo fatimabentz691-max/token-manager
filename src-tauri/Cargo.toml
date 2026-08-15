@@ -1,6 +1,6 @@
 [package]
 name = "token-manager"
-version = "0.11.13"
+version = "0.12.0"
 description = "本地 AI Token 用量监控工具"
 edition = "2021"
 default-run = "token-manager"
@@ -43,6 +43,7 @@ pbkdf2 = "0.12"
 sha2 = "0.10"
 rand = "0.8"
 rust_xlsxwriter = "0.96"
+zstd = "0.13"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

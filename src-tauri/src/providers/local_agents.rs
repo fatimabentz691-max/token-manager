@@ -940,6 +940,25 @@ fn agent_token_paths(agent_id: &str, field: &str) -> &'static [&'static str] {
         "/tokens/cache_read",
         "/cached_tokens",
     ];
+    // DeepSeek Harness 会话记录：完整消息级 usage 位于 data.usage（camelCase），
+    // 流式分片 usage 位于 data.chunk.usage；只保留 /data/usage/* 消息级路径，
+    // 避免通用 /usage/* 路径误配 chunk 包裹对象造成重复计数。
+    const INPUT_DSH: &[&str] = &[
+        "/data/usage/inputTokens",
+        "/data/usage/input_tokens",
+        "/data/usage/tokens/input",
+    ];
+    const OUTPUT_DSH: &[&str] = &[
+        "/data/usage/outputTokens",
+        "/data/usage/output_tokens",
+        "/data/usage/tokens/output",
+    ];
+    const CACHE_DSH: &[&str] = &[
+        "/data/usage/cacheReadTokens",
+        "/data/usage/cached_tokens",
+        "/data/usage/cache_read_input_tokens",
+        "/data/usage/cacheReadInputTokens",
+    ];
     const INPUT_GEMINI: &[&str] = &[
         "/usageMetadata/promptTokenCount",
         "/tokens/input",
@@ -965,7 +984,9 @@ fn agent_token_paths(agent_id: &str, field: &str) -> &'static [&'static str] {
         "/attributes/gen_ai.usage.cache_read_input_tokens",
         "/usage/cached_tokens",
     ];
-    let profile = if agent_id == "gemini-cli" {
+    let profile = if agent_id == "deepseek-harness" {
+        "dsh"
+    } else if agent_id == "gemini-cli" {
         "gemini"
     } else if agent_id == "github-copilot" {
         "otel"
@@ -985,6 +1006,9 @@ fn agent_token_paths(agent_id: &str, field: &str) -> &'static [&'static str] {
         "standard"
     };
     match (profile, field) {
+        ("dsh", "input") => INPUT_DSH,
+        ("dsh", "output") => OUTPUT_DSH,
+        ("dsh", "cached") => CACHE_DSH,
         ("gemini", "input") => INPUT_GEMINI,
         ("gemini", "output") => OUTPUT_GEMINI,
         ("gemini", "cached") => CACHE_GEMINI,
@@ -1056,6 +1080,9 @@ fn event_from_value(
             "/tokens/reasoning",
             "/tokens/thoughts",
             "/reasoning_tokens",
+            "/usage/reasoningTokens",
+            "/data/usage/reasoningTokens",
+            "/data/usage/reasoning_tokens",
         ],
     );
     if direct_input + output + cached + cache_write + reasoning == 0 {
@@ -1072,6 +1099,8 @@ fn event_from_value(
             "/message/model",
             "/request/model",
             "/provider/model",
+            "/data/message/source/model",
+            "/data/message/model",
         ],
     )
     .unwrap_or_else(|| {
@@ -1134,7 +1163,7 @@ fn event_from_value(
     ))
 }
 
-fn collect_files(roots: &[PathBuf]) -> Vec<PathBuf> {
+fn collect_files(roots: &[PathBuf], allow_zstd: bool) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let started = Instant::now();
     let mut stack = roots
@@ -1154,7 +1183,9 @@ fn collect_files(roots: &[PathBuf]) -> Vec<PathBuf> {
                 .and_then(|value| value.to_str())
                 .unwrap_or_default()
                 .to_ascii_lowercase();
-            if matches!(ext.as_str(), "json" | "jsonl" | "ndjson") {
+            if matches!(ext.as_str(), "json" | "jsonl" | "ndjson")
+                || (allow_zstd && ext == "zstd")
+            {
                 files.push(path);
             }
             continue;
@@ -1175,7 +1206,9 @@ fn collect_files(roots: &[PathBuf]) -> Vec<PathBuf> {
                     .and_then(|value| value.to_str())
                     .unwrap_or_default()
                     .to_ascii_lowercase();
-                if matches!(ext.as_str(), "json" | "jsonl" | "ndjson") {
+                if matches!(ext.as_str(), "json" | "jsonl" | "ndjson")
+                    || (allow_zstd && ext == "zstd")
+                {
                     files.push(child);
                 }
             }
@@ -1265,10 +1298,10 @@ fn sync_json(
             source.provider
         ));
     }
-    let files = collect_files(&source_roots);
+    let files = collect_files(&source_roots, source.agent_id == "deepseek-harness");
     if files.is_empty() {
         return Err(format!(
-            "已发现 {}，但没有可解析的 JSON/JSONL 用量文件",
+            "已发现 {}，但没有可解析的 JSON/JSONL/ZSTD 用量文件",
             source_roots[0].display()
         ));
     }
@@ -1295,16 +1328,33 @@ fn sync_json(
         if old_cursor.get(&key).is_some_and(|value| *value >= modified) {
             continue;
         }
-        let Ok(raw) = fs::read_to_string(&path) else {
-            continue;
-        };
-        scanned += 1;
-        let values = if path
+        let is_zstd = path
             .extension()
             .and_then(|value| value.to_str())
-            .is_some_and(|value| {
-                value.eq_ignore_ascii_case("jsonl") || value.eq_ignore_ascii_case("ndjson")
-            }) {
+            .is_some_and(|value| value.eq_ignore_ascii_case("zstd"));
+        // DeepSeek Harness 的会话文件为 zstd 压缩的 JSONL（session.jsonl.zstd），先解压再逐行解析。
+        let raw = if is_zstd {
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            match zstd::stream::decode_all(bytes.as_slice()) {
+                Ok(decoded) => String::from_utf8_lossy(&decoded).into_owned(),
+                Err(_) => continue,
+            }
+        } else {
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
+            };
+            content
+        };
+        scanned += 1;
+        let values = if is_zstd
+            || path
+                .extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| {
+                    value.eq_ignore_ascii_case("jsonl") || value.eq_ignore_ascii_case("ndjson")
+                }) {
             raw.lines()
                 .filter_map(|line| serde_json::from_str::<Value>(line).ok())
                 .collect::<Vec<_>>()
@@ -1710,6 +1760,85 @@ mod tests {
         };
         let outcome = sync_json(&target, &source, false).unwrap();
         assert_eq!(outcome.imported, 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dsh_zstd_sessions_are_decoded_and_message_usage_imported_once() {
+        let root = std::env::temp_dir().join(format!(
+            "tm-agent-dsh-zstd-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        // DeepSeek Harness 会话：流式分片 usage 不应入库，消息级 data.usage 应入库一次。
+        let lines = [
+            r#"{"type":"session","version":0,"id":"session-1","createdAt":1786701970402,"cwd":"D:\\lbl"}"#,
+            r#"{"type":"assistant/chunk","seq":1,"time":1786701971000,"data":{"turn":1,"step":1,"chunk":{"type":"usage","usage":{"inputTokens":50,"outputTokens":10,"cacheReadTokens":0,"reasoningTokens":5}}}}"#,
+            r#"{"type":"assistant/message","seq":2,"time":1786701972000,"data":{"turn":1,"step":1,"message":{"role":"assistant","id":"msg-1","source":{"kind":"model","provider":"deepseek-official","model":"deepseek-v4-flash"}},"usage":{"inputTokens":1184,"outputTokens":154,"cacheReadTokens":0,"reasoningTokens":106}}}"#,
+        ];
+        let payload = lines.join("\n");
+        let compressed = zstd::stream::encode_all(payload.as_bytes(), 3).unwrap();
+        fs::write(root.join("session.jsonl.zstd"), compressed).unwrap();
+        let target = Connection::open_in_memory().unwrap();
+        target.execute_batch("CREATE TABLE usage_events(id TEXT PRIMARY KEY,provider TEXT,model TEXT,at TEXT,input_tokens INTEGER,output_tokens INTEGER,cached_tokens INTEGER,cost REAL,task TEXT);").unwrap();
+        reliability::migrate_database(&target).unwrap();
+        let source = SyncSourceConfig {
+            id: "agent-deepseek-harness".into(),
+            provider: "DeepSeek".into(),
+            kind: "local_json".into(),
+            mode: "jsonl".into(),
+            path: root.to_string_lossy().into_owned(),
+            enabled: true,
+            interval_seconds: 30,
+            agent_id: "deepseek-harness".into(),
+            collector_kind: "jsonl".into(),
+            paths: vec![],
+            capabilities: vec!["本地会话目录".into()],
+            detected: true,
+            schema_version: 1,
+            path_mode: "manual".into(),
+            path_spec_ids: vec![],
+        };
+        let outcome = sync_json(&target, &source, false).unwrap();
+        if outcome.imported != 1 {
+            let mut stmt = target
+                .prepare("SELECT id,provider,model,input_tokens,output_tokens FROM usage_events")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok(format!(
+                        "{}|{}|{}|{}|{}",
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, i64>(4)?
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            panic!("imported={} rows={:?}", outcome.imported, rows);
+        }
+        assert_eq!(outcome.imported, 1, "流式分片不应入库，消息级用量应恰好入库一次");
+        let row = target
+            .query_row(
+                "SELECT provider,model,input_tokens,output_tokens FROM usage_events LIMIT 1",
+                [],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(row.0, "DeepSeek");
+        assert_eq!(row.1, "deepseek-v4-flash");
+        assert_eq!(row.2, 1184);
+        assert_eq!(row.3, 154 + 106, "推理 Token 计入输出");
         let _ = fs::remove_dir_all(root);
     }
 

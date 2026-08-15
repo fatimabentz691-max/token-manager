@@ -32,6 +32,7 @@ import traeAgent from '../assets/brands/agents/trae.png?url'
 import anthropic from '../assets/providers/official/anthropic.png?url'
 import baichuan from '../assets/providers/official/baichuan.ico?url'
 import deepseek from '../assets/providers/official/deepseek.png?url'
+import deepseekHarness from '../assets/providers/official/deepseek-harness.svg?url'
 import doubao from '../assets/providers/official/doubao.png?url'
 import gemini from '../assets/providers/official/gemini.svg?url'
 import hunyuan from '../assets/providers/official/hunyuan.ico?url'
@@ -52,6 +53,8 @@ interface LogoDefinition {
   src: string
   /** 宽版官方字标需要稍微缩小，保证完整显示且不被裁切。 */
   fit?: 'symbol' | 'wordmark'
+  /** 单色官方图形（黑色鲸鱼等）在深色主题下反白，保证对比度。 */
+  mono?: boolean
 }
 
 const props = defineProps<{ name: string }>()
@@ -67,7 +70,7 @@ const logos: Record<string, LogoDefinition> = {
   '通义百炼': { src: qwen },
   '智谱 AI': { src: zhipu },
   DeepSeek: { src: deepseek },
-  'DeepSeek Harness': { src: deepseek },
+  'DeepSeek Harness': { src: deepseekHarness, mono: true },
   Kimi: { src: kimi },
   '讯飞星火': { src: spark },
   MiniMax: { src: minimax },
@@ -144,7 +147,7 @@ const simpleIcon = computed(() => simpleIcons[props.name])
       v-if="logo"
       :src="logo.src"
       :alt="`${name} 官方商标`"
-      :class="{ 'is-wordmark': logo.fit === 'wordmark' }"
+      :class="{ 'is-wordmark': logo.fit === 'wordmark', 'is-monochrome': logo.mono }"
       draggable="false"
     >
     <svg
@@ -191,6 +194,11 @@ const simpleIcon = computed(() => simpleIcons[props.name])
 .provider-mark img.is-wordmark {
   width: 28px;
   height: 15px;
+}
+
+/* 单色官方图形（如 DeepSeek Harness 黑色鲸鱼）在深色主题下反白。 */
+:global(.theme-dark) .provider-mark img.is-monochrome {
+  filter: invert(1);
 }
 
 .provider-mark.has-simple-icon {

@@ -11,6 +11,14 @@ if (/MutationObserver|classifyLegacyDescriptions|installSupplementalDescriptionO
 if (!/visibility\.value === 'hover'/.test(help) || !/v-if="interactive"/.test(help)) errors.push('SupplementalHelp 未严格限制为靠近模式交互')
 if (!/data-description-visibility="hidden"[^\n]+display:none!important/.test(css)) errors.push('完全隐藏模式缺少不可交互的 display:none 规则')
 if (/data-description-visibility="hidden"[^\n]+:where\(:hover/.test(css)) errors.push('完全隐藏模式仍可通过悬停恢复')
+if (/tm-local-help-anchor/.test(css)) errors.push('已删除的死规则 tm-local-help-anchor 不应回归')
+if (!css.includes(':where(:not(:hover):not(:focus-within))')) errors.push('靠近模式缺少“悬停才显现”的自我否定结构')
+const hiddenRuleStart = css.indexOf('data-description-visibility="hidden"')
+const hiddenRuleEnd = css.indexOf('data-description-visibility="hover"')
+const hiddenBlock = hiddenRuleStart >= 0 && hiddenRuleEnd > hiddenRuleStart ? css.slice(hiddenRuleStart, hiddenRuleEnd) : ''
+if (!/\.connection-state/.test(hiddenBlock)) errors.push('完全隐藏未覆盖数据通道状态说明')
+if (!/\.floating-footer/.test(hiddenBlock)) errors.push('完全隐藏未覆盖悬浮窗状态说明')
+if (!/\.settings-center/.test(hiddenBlock) || !/\.modal-backdrop/.test(hiddenBlock)) errors.push('完全隐藏缺少设置面板与模态框豁免')
 
 async function walk(directory) {
   const paths = []

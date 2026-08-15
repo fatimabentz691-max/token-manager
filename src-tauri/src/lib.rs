@@ -805,7 +805,11 @@ async fn fetch_and_store_deepseek_balance(
     key: &str,
 ) -> Result<Vec<AccountBalance>, String> {
     let base = base_url.trim_end_matches('/').trim_end_matches("/v1");
-    let value = reqwest::Client::new()
+    let value = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("无法创建余额请求客户端：{e}"))?
         .get(format!("{base}/user/balance"))
         .bearer_auth(key)
         .header("Accept", "application/json")
@@ -1312,32 +1316,42 @@ fn start_proxy_group(
         match result {
             Ok(Ok(endpoints)) => {
                 let mut warnings = Vec::new();
-                if let Some(endpoint_id) = endpoints
-                    .first()
-                    .map(|endpoint| endpoint.account_id.clone())
-                {
-                    for agent_id in running.agent_ids.clone() {
-                        running.stage = "configure".into();
-                        running.detail = format!("正在为 {agent_id} 原子写入专属连接配置");
-                        update_proxy_job(&task_app, running.clone());
-                        let integration_app = task_app.clone();
-                        let integration_endpoint = endpoint_id.clone();
-                        let integration_agent = agent_id.clone();
-                        match tauri::async_runtime::spawn_blocking(move || {
-                            connect_agent_proxy_blocking(
-                                integration_agent,
-                                integration_endpoint,
-                                integration_app,
-                            )
+                // 一键接入：每个 Agent 配对到协议兼容的账户端点（Claude Code 走 anthropic 通道，
+                // DeepSeek Harness 走 DeepSeek 的 OpenAI 兼容通道），不再全部挤到第一个账户。
+                for agent_id in running.agent_ids.clone() {
+                    running.stage = "configure".into();
+                    running.detail = format!("正在为 {agent_id} 原子写入专属连接配置");
+                    update_proxy_job(&task_app, running.clone());
+                    let integration_endpoint = endpoints
+                        .iter()
+                        .find(|endpoint| match agent_id.as_str() {
+                            "claude-code" => endpoint.anthropic_url.is_some(),
+                            "deepseek-harness" => endpoint.provider == "DeepSeek",
+                            _ => false,
                         })
-                        .await
-                        {
-                            Ok(Ok(_)) => {}
-                            Ok(Err(error)) => warnings.push(error),
-                            Err(error) => {
-                                warnings.push(format!("{agent_id} 配置线程异常：{error}"))
+                        .or_else(|| endpoints.first())
+                        .map(|endpoint| endpoint.account_id.clone());
+                    match integration_endpoint {
+                        Some(endpoint_id) => {
+                            let integration_app = task_app.clone();
+                            let integration_agent = agent_id.clone();
+                            match tauri::async_runtime::spawn_blocking(move || {
+                                connect_agent_proxy_blocking(
+                                    integration_agent,
+                                    endpoint_id,
+                                    integration_app,
+                                )
+                            })
+                            .await
+                            {
+                                Ok(Ok(_)) => {}
+                                Ok(Err(error)) => warnings.push(error),
+                                Err(error) => {
+                                    warnings.push(format!("{agent_id} 配置线程异常：{error}"))
+                                }
                             }
                         }
+                        None => warnings.push(format!("{agent_id} 没有可用的账户端点")),
                     }
                 }
                 running.status = "completed".into();
@@ -1621,7 +1635,11 @@ async fn fetch_account_models(id: String, state: State<'_, AppDb>) -> Result<Vec
     } else {
         format!("{base}/v1/models")
     };
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("无法创建模型列表请求客户端：{e}"))?;
     let mut request = client.get(url);
     if provider == "Anthropic" {
         request = request
