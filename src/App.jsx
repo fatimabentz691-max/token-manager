@@ -23,15 +23,15 @@ const fallbackSiteContent = {
   privacy_note: "本地解析 · 密钥加密 · 不上传代码与日志",
 };
 const fallbackRelease = {
-  version: "0.11.13",
-  title: "更新公告与 Harness 仪表盘修复版",
-  download_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.13/Token.Manager_0.11.13_x64-setup.exe",
-  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.13/TokenManager_0.11.13_x64-portable.exe",
-  file_name: "Token.Manager_0.11.13_x64-setup.exe",
-  size_bytes: 11144332,
-  sha256: "05105FDFEAADCB9C77C682CE93A6A3C078D63A51461C91EE3297A3D42A01E2B1",
-  published_at: "2026-08-14T05:40:00.000Z",
-  notes: "更新公告改为与软件公告同位置的内容区内嵌横幅，修复液态玻璃主题下被左侧菜单栏遮挡的问题；同时包含 DeepSeek Harness 仪表盘修复（本地总览合并本机代理拦截用量）。",
+  version: "0.12.0",
+  title: "本地 Agent 一键接入与仪表盘体验升级",
+  download_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.12.0/Token.Manager_0.12.0_x64-setup.exe",
+  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.12.0/TokenManager_0.12.0_x64-portable.exe",
+  file_name: "Token.Manager_0.12.0_x64-setup.exe",
+  size_bytes: 11276719,
+  sha256: "328297FABF8C27FF56F108F2CA81FAA137470248EB487129906B519FA376DBEA",
+  published_at: "2026-08-15T10:44:00.000Z",
+  notes: "本地 Agent 一键接入（自动识别并配对账户端点）；DeepSeek Harness zstd 会话解析与余额刷新超时修复；仪表盘菜单栏按钮圆角按设计规范统一为 12px；仪表盘标题去重与说明显示方式链路修复。",
 };
 
 const versionNumber = (value) => String(value || "").split(".").reduce((total, part) => total * 1000 + (Number.parseInt(part, 10) || 0), 0);
@@ -68,7 +68,7 @@ export function App() {
   }, []);
   const releaseSize = release.size_bytes ? `${(release.size_bytes / 1048576).toFixed(2)} MB` : "Windows 10 / 11 64 位";
   const releaseDate = new Date(release.published_at).toLocaleDateString("zh-CN");
-  const trackedDownloadHref = "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.11.13/Token.Manager_0.11.13_x64-setup.exe";
+  const trackedDownloadHref = "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.12.0/Token.Manager_0.12.0_x64-setup.exe";
 
   return (
     <div className="site-shell">
