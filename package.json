@@ -1,11 +1,13 @@
 {
   "name": "token-manager",
-  "version": "0.12.0",
+  "version": "0.14.2",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "qa:descriptions": "node scripts/qa-description-contract.mjs",
+    "qa:liquid-scroll": "node scripts/qa-liquid-scroll-follow.mjs",
+    "qa:ios-scroll-fade": "node scripts/qa-ios-scroll-fade.mjs",
     "build": "npm run qa:descriptions && vue-tsc --noEmit && vite build",
     "preview": "vite preview"
   },
@@ -16,6 +18,7 @@
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "echarts": "^5.5.1",
+    "lottie-web": "^5.13.0",
     "motion": "^12.43.0",
     "pinia": "^2.2.2",
     "simple-icons": "^16.26.0",

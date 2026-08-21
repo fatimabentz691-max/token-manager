@@ -8,6 +8,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import {
   ChartNoAxesCombined,
+  ChevronDown,
   Command,
   FileChartColumn,
   KeyRound,
@@ -35,6 +36,7 @@ import ThemeSwitcher from './components/ThemeSwitcher.vue'
 import InteractionEffects from './components/InteractionEffects.vue'
 import LiquidGlassEnvironment from './components/LiquidGlassEnvironment.vue'
 import EdgeScrollRail from './components/EdgeScrollRail.vue'
+import ScrollFadeVeils from './components/ScrollFadeVeils.vue'
 import DataSourceBadge from './components/DataSourceBadge.vue'
 import SyncHealthPanel from './components/SyncHealthPanel.vue'
 import OnboardingFlow from './components/OnboardingFlow.vue'
@@ -42,6 +44,7 @@ import SupplementalHelp from './components/SupplementalHelp.vue'
 import UpdateNotice from './components/UpdateNotice.vue'
 import AgentDrilldown from './components/AgentDrilldown.vue'
 import FloatingWindowV3, { type FloatingDashboardView, type FloatingMetric, type FloatingRenderStatusView } from './components/FloatingWindowV3.vue'
+import DashboardSourcePicker from './components/DashboardSourcePicker.vue'
 import tokenManagerLogo from './assets/token-manager-logo.png?url'
 import codexOfficialLogo from './assets/brands/codex-official-blue.png?url'
 import ccSwitchOfficialLogo from './assets/brands/cc-switch-official.png?url'
@@ -50,13 +53,13 @@ import { chartColorStyle, useChartColorPreferences } from './features/chartColor
 import { themeStyle, useThemePreferences } from './features/themePreferences'
 import { useVisualPreferences, type GlassDistortionSettings, type GlassQuality } from './features/visualPreferences'
 import { useMotionPreferences } from './features/motionPreferences'
-import { buildCodexInsights, loadLocal, priceCatalog } from './features/retention'
-import { currentCloudBaseUrl } from './features/cloudConfig'
+import { buildCodexInsights, loadLocal, priceCatalog, saveLocal } from './features/retention'
+import { currentCloudBaseUrl, GITHUB_STATIC_CONTENT_URL } from './features/cloudConfig'
 import {
   defaultFloatingSizes,
-  loadFloatingConfigV3,
-  saveFloatingConfigV3,
-  type FloatingConfigV3,
+  loadFloatingConfigV4,
+  saveFloatingConfigV4,
+  type FloatingConfigV4,
   type FloatingInteractionMode,
   type FloatingMode,
   type FloatingModuleId,
@@ -102,9 +105,11 @@ interface ClientIntegrationResult { connected:boolean; account_name:string; open
 interface OpenCodeLocalSyncResult { imported:number; scanned_files:number; source:string; detail:string }
 interface CloudSession { email:string; base_url:string; expires_at:string }
 interface CloudTransfer { id:string; link:string; expires_at:string; one_time:boolean }
+interface BalanceCapability { provider:string; official_api:boolean; detail:string }
 interface RemoteContentItem { id:string; kind:'announcement'|'ad'; title:string; body:string; action_label:string; action_url:string; starts_at:string; ends_at?:string|null; enabled:boolean; created_at:string; updated_at:string }
 interface PresenceReleaseSummary { version:string; title?:string; size_bytes:number; notes:string; highlights:string[]; fixes:string[]; published_at:string; download_url:string }
 interface PresenceAckV2 { ok:boolean; server_time:string; heartbeat_interval:number; latest_release?:PresenceReleaseSummary|null }
+interface MonthlyUsageEstimate { month:string; days_elapsed:number; days_in_month:number; month_tokens:number; month_cost:number; avg_daily_tokens:number; avg_daily_cost:number; projected_month_tokens:number; projected_month_cost:number; last30d_tokens:number; last30d_cost:number }
 const floatingModuleCatalog:{id:FloatingModuleId;title:string;description:string}[]=[
  {id:'globalRemaining',title:'全局总剩余额度',description:'综合显示当前个人预算剩余比例'},
  {id:'todayTokens',title:'今日总消耗 Token',description:'Codex 与 API 今日 Token 合计'},
@@ -118,7 +123,8 @@ const floatingModuleCatalog:{id:FloatingModuleId;title:string;description:string
  {id:'cacheChart',title:'缓存命中环',description:'当前模型缓存命中率迷你环图'},
  {id:'costChart',title:'7 天消费图',description:'当前模型每日消费金额迷你柱图'},
  {id:'requestChart',title:'7 天请求图',description:'当前模型每日 API 请求次数迷你柱图'},
- {id:'tokenTrendChart',title:'7 天 Token 趋势',description:'与仪表盘真实数据一致的迷你折线图'}
+ {id:'tokenTrendChart',title:'7 天 Token 趋势',description:'与仪表盘真实数据一致的迷你折线图'},
+ {id:'monthlyBudget',title:'本月预算预估',description:'本月消耗与月底预计（本地估算，非官方账单）'}
 ]
 const floatingIds=floatingModuleCatalog.map(item=>item.id)
 const { mode: globalMode, setMode: setGlobalMode } = useChartPreferences()
@@ -134,7 +140,7 @@ const {
 } = useThemePreferences()
 const { chartColorTheme, chartColorThemeId, syncChartColorTheme } = useChartColorPreferences()
 const { glassQuality, glassDistortion, syncGlassQuality, syncGlassDistortion } = useVisualPreferences()
-const { spotlightEnabled, syncSpotlightEnabled } = useMotionPreferences()
+const { motionEnabled, spotlightEnabled, syncSpotlightEnabled } = useMotionPreferences()
 const appThemeStyle=computed(()=>({...themeStyle(appTheme.value),...chartColorStyle(chartColorTheme.value)}))
 const appThemeDark=computed(()=>appTheme.value.material==='liquid'?liquidTone.value==='dark':appTheme.value.dark)
 for(const [next,legacy] of [['token-manager-selected-dashboard','tokenlens-selected-dashboard'],['token-manager-model-dashboards-v2','tokenlens-model-dashboards-v2'],['token-manager-floating','tokenlens-floating']] as const){if(localStorage.getItem(next)===null&&localStorage.getItem(legacy)!==null)localStorage.setItem(next,localStorage.getItem(legacy)!)}
@@ -209,9 +215,17 @@ const agentActionStatus=ref<Record<string,string>>({})
 const onboardingOpen=ref(false)
 const backupPassword=ref('')
 const backupStatus=ref('')
+const localBackupStatus=ref('')
 const cloudSession=ref<CloudSession|null>(null)
 const cloudStatus=ref('')
 const cloudTransferLink=ref('')
+const balanceCapabilities=ref<BalanceCapability[]>([])
+// 图一：账户页“官方余额接口说明”改为可收起；状态本地持久化，默认展开。
+const balanceCapabilitiesExpanded=ref(loadLocal('token-manager-balance-note-expanded', true))
+function toggleBalanceCapabilities() {
+  balanceCapabilitiesExpanded.value=!balanceCapabilitiesExpanded.value
+  saveLocal('token-manager-balance-note-expanded', balanceCapabilitiesExpanded.value)
+}
 const remoteContent=ref<RemoteContentItem[]>([])
 const lastContentRefresh=ref(0)
 const dismissedRemoteContent=ref<Set<string>>(new Set(JSON.parse(sessionStorage.getItem('token-manager-dismissed-content')||'[]')))
@@ -245,8 +259,38 @@ async function syncFloatingNativeGlass() {
 watch([appThemeId,liquidTone,liquidTransparency,glassQuality,()=>glassDistortion.value.edgeBend,effectiveLiquidBackgroundImage,liquidBackgroundVideoPath],()=>{void syncFloatingNativeGlass();void configureFloatingRenderer();void reportFloatingSurfaces()},{immediate:true})
  // 主窗口只恢复上次显式启用状态；独立的 --floating 验收入口本身视为已启用。
  const floatingEnabled = ref(floatingMode||localStorage.getItem('token-manager-floating')==='1')
- const floatingConfig=ref<FloatingConfigV3>(loadFloatingConfigV3(floatingIds))
+const floatingHotkey=ref<{enabled:boolean;combo:string}>(loadLocal('token-manager-floating-hotkey',{enabled:false,combo:'ctrl-alt-t'}))
+const floatingHotkeyStatus=ref('')
+const HOTKEY_COMBOS:Record<string,{modifiers:number;vk:number;label:string}>={
+ 'ctrl-alt-t':{modifiers:3,vk:0x54,label:'Ctrl + Alt + T'},
+ 'ctrl-shift-f12':{modifiers:6,vk:0x7B,label:'Ctrl + Shift + F12'},
+ 'alt-shift-t':{modifiers:5,vk:0x54,label:'Alt + Shift + T'},
+}
+async function applyFloatingHotkey(){
+ saveLocal('token-manager-floating-hotkey',floatingHotkey.value)
+ if(!tauriRuntime)return
+ const combo=HOTKEY_COMBOS[floatingHotkey.value.combo]
+ if(!combo){floatingHotkeyStatus.value='快捷键组合无效';return}
+ try{await invoke('set_floating_hotkey',{enabled:floatingHotkey.value.enabled,modifiers:combo.modifiers,vk:combo.vk});floatingHotkeyStatus.value=floatingHotkey.value.enabled?`已启用· ${combo.label}`:''}
+ catch(error){floatingHotkeyStatus.value=`快捷键设置失败：${String(error)}`}
+}
+ const floatingConfig=ref<FloatingConfigV4>(loadFloatingConfigV4(floatingIds))
  const floatingCollapsed = ref(floatingConfig.value.mode==='capsule')
+ const floatingRenderedMode = ref<FloatingMode>(floatingConfig.value.mode)
+ const floatingRenderedPresentation = ref<'window'|'edge-handle'>(floatingConfig.value.presentation)
+ const floatingTransitioning = ref(false)
+ const floatingTransitionStage = ref<'idle'|'leaving'|'resizing'|'entering'>('idle')
+let floatingTransitionTimer:number|undefined
+let floatingTransitionRequestRevision=0
+let floatingVisualTransitionRevision=0
+let floatingVisualRevisionSeed=0
+let floatingNativeTransitionId=0
+let floatingPeekTransitionId=0
+// 当前切换请求的目标形态：由 transition-start 广播同步给主窗口与悬浮窗，
+// 两窗口共用同一份期望值。complete 事件只有与期望形态一致才被接受，
+// 防止被取消的旧请求迟到提交旧 DOM，造成切换中途旧内容闪回。
+let floatingExpectedMode:FloatingMode=floatingConfig.value.mode
+let floatingExpectedPresentation:'window'|'edge-handle'=floatingConfig.value.presentation
 const floatingCustomizing=ref(false)
  const floatingChartMetric=ref<FloatingMetric>((localStorage.getItem('token-manager-floating-chart') as FloatingMetric)||'tokens')
 const draggedFloatingModule=ref<FloatingModuleId|null>(null)
@@ -271,8 +315,12 @@ let lastUsagePoll=0
 let lastFullSync=Date.now()
 let unlistenFloating:(()=>void)|undefined
 let unlistenSelection:(()=>void)|undefined
+let unlistenHotkey:(()=>void)|undefined
+let unlistenHotkeyError:(()=>void)|undefined
 let unlistenFloatingConfig:(()=>void)|undefined
 let unlistenFloatingResize:(()=>void)|undefined
+let unlistenFloatingTransition:(()=>void)|undefined
+let unlistenFloatingTransitionStart:(()=>void)|undefined
 let unlistenUsageUpdated:(()=>void)|undefined
 let unlistenSyncStatus:(()=>void)|undefined
 let unlistenSyncJob:(()=>void)|undefined
@@ -288,10 +336,10 @@ let unlistenChartColorSync:(()=>void)|undefined
 let floatingSnapTimer:number|undefined
 let floatingResizeSaveTimer:number|undefined
 let floatingMoveSaveTimer:number|undefined
-function broadcastTheme(event:Event){
- const id=(event as CustomEvent<string>).detail
- if(id)void emit('theme-sync',{id,source:floatingMode?'floating':'main'})
-}
+ function broadcastTheme(event:Event){
+  const id=(event as CustomEvent<string>).detail
+  if(id)void emit('theme-sync',{id,source:floatingMode?'floating':'main'})
+ }
 function broadcastVisualPreference(event:Event){
  const quality=(event as CustomEvent<GlassQuality>).detail
  if(quality)void emit('visual-preference-sync',{quality,source:floatingMode?'floating':'main'})
@@ -322,6 +370,7 @@ onMounted(()=>{
  window.addEventListener('focus',onWindowFocus)
  void listen<{id:string;source:string}>('theme-sync',event=>{
    if(event.payload?.id&&event.payload.id!==appThemeId.value)syncTheme(event.payload.id)
+   if(floatingMode)void configureFloatingRenderer()
  }).then(unlisten=>{unlistenThemeSync=unlisten})
  void listen<{quality:GlassQuality;source:string}>('visual-preference-sync',event=>{
    if(event.payload?.quality&&event.payload.quality!==glassQuality.value)syncGlassQuality(event.payload.quality)
@@ -345,11 +394,14 @@ onMounted(()=>{
     if(floatingMode){if(event.payload){void configureFloatingRenderer();void reportFloatingSurfaces()}else void refreshFloatingRenderStatus()}
  }).then(unlisten=>{unlistenFloating=unlisten})
  void listen<string>('dashboard-selection',event=>{selectedDashboard.value=event.payload}).then(unlisten=>{unlistenSelection=unlisten})
- void listen<FloatingConfigV3>('floating-config',event=>{
-   const value=event.payload?.version===3?event.payload:loadFloatingConfigV3(floatingIds)
+ void listen('floating-hotkey',()=>{ if(!floatingMode&&tauriRuntime) void toggleFloating() }).then(unlisten=>{unlistenHotkey=unlisten})
+ void listen<string>('floating-hotkey-error',event=>{floatingHotkeyStatus.value=event.payload}).then(unlisten=>{unlistenHotkeyError=unlisten})
+ void listen<FloatingConfigV4>('floating-config',event=>{
+   const value=event.payload?.version===4?event.payload:loadFloatingConfigV4(floatingIds)
    floatingConfig.value=value
    floatingCollapsed.value=value.mode==='capsule'
-   saveFloatingConfigV3(value)
+   if(!floatingTransitioning.value){floatingRenderedMode.value=value.mode;floatingRenderedPresentation.value=value.presentation}
+   saveFloatingConfigV4(value)
    // 发送端已经完成原生尺寸调整。接收端只同步视图，禁止再次 setSize 或 emit，
    // 否则主窗口与悬浮窗会互相触发 Resized，形成无限抖动反馈回路。
    if(floatingMode){
@@ -358,6 +410,65 @@ onMounted(()=>{
      void reportFloatingSurfaces()
    }
  }).then(unlisten=>{unlistenFloatingConfig=unlisten})
+ void listen<{revision:number;animate:boolean;mode?:FloatingMode;presentation?:'window'|'edge-handle'}>('floating-window-transition-start',event=>{
+   if(!event.payload||event.payload.revision<floatingVisualTransitionRevision)return
+   floatingVisualTransitionRevision=event.payload.revision
+   if(event.payload.mode)floatingExpectedMode=event.payload.mode
+   if(event.payload.presentation)floatingExpectedPresentation=event.payload.presentation
+   if(floatingTransitionTimer)clearTimeout(floatingTransitionTimer)
+   floatingTransitioning.value=true
+   floatingTransitionStage.value=event.payload.animate?'leaving':'resizing'
+   if(event.payload.animate){
+     const revision=event.payload.revision
+     floatingTransitionTimer=globalThis.setTimeout(()=>{
+       if(revision===floatingVisualTransitionRevision&&floatingTransitioning.value)floatingTransitionStage.value='resizing'
+     },72)
+   }
+ }).then(unlisten=>{unlistenFloatingTransitionStart=unlisten})
+  void listen<{transitionId:number;mode:FloatingMode;presentation:'window'|'edge-handle';side:'left'|'right';transientPeek?:boolean}>('floating-window-transition-complete',event=>{
+   if(event.payload.transitionId<floatingNativeTransitionId)return
+   floatingNativeTransitionId=event.payload.transitionId
+    const isHandlePeek=event.payload.transientPeek===true||(event.payload.transitionId===floatingPeekTransitionId&&floatingConfig.value.presentation==='edge-handle')
+   // 被取消的旧请求即使迟到（Rust 已拦截，此处为 IPC 在途的最后一层防御）
+   // 也不得提交旧 DOM：它的形态必然不同于当前请求广播的目标形态。
+   if(!isHandlePeek&&(event.payload.mode!==floatingExpectedMode||event.payload.presentation!==floatingExpectedPresentation))return
+   // 原生完成事件会同时送达主窗口与悬浮窗。两个窗口必须先把同一份目标状态
+   // 写回各自的配置副本，再广播持久化；否则主窗口会把旧形态重新广播回来，
+   // 出现“原生尺寸已变、Vue 内容仍是上一形态”的闪烁与卡住现象。
+   if(!isHandlePeek){
+     floatingConfig.value.mode=event.payload.mode
+     floatingConfig.value.presentation=event.payload.presentation
+     if(event.payload.presentation==='window')floatingConfig.value.lastExpandedMode=event.payload.mode
+     floatingCollapsed.value=event.payload.mode==='capsule'
+   }
+    floatingConfig.value.edgeHandleSide=event.payload.side
+    // 目标 DOM 先以隐藏内容提交，标题和状态栏继续保留视觉连续性；下一绘制周期
+    // 只淡入数据区，避免此前整窗不透明遮罩造成的“白屏再出现”观感。
+    floatingTransitionStage.value='resizing'
+    floatingRenderedMode.value=isHandlePeek?floatingConfig.value.mode:event.payload.mode
+    floatingRenderedPresentation.value=isHandlePeek?'edge-handle':event.payload.presentation
+    document.documentElement.classList.toggle('floating-handle-presentation',isHandlePeek||event.payload.presentation==='edge-handle')
+    document.documentElement.style.setProperty('--floating-window-radius',isHandlePeek?'22px':event.payload.presentation==='edge-handle'?'14px':event.payload.mode==='capsule'?'28px':'24px')
+   if(floatingTransitionTimer)clearTimeout(floatingTransitionTimer)
+   // 数据区淡入依赖双 rAF 让原生完成帧先落屏。最小化/低帧率时 rAF 可能被
+   // 暂停，用定时器兜底，避免 transitioning 永久卡住导致窗口不可交互。
+   const enterTargetLayout=()=>{
+    if(event.payload.transitionId!==floatingNativeTransitionId)return
+    floatingTransitionStage.value='entering'
+    if(floatingTransitionTimer)clearTimeout(floatingTransitionTimer)
+    floatingTransitionTimer=globalThis.setTimeout(()=>{
+     // 160ms 窗口内若已被更新的请求取代（快速连点），不得复位过渡状态，
+     // 也不得把旧形态持久化并广播回对端窗口。
+     if(event.payload.transitionId!==floatingNativeTransitionId)return
+     floatingTransitioning.value=false
+     floatingTransitionStage.value='idle'
+     persistFloatingConfig()
+     void reportFloatingSurfaces()
+    },isHandlePeek?24:160)
+   }
+   requestAnimationFrame(()=>requestAnimationFrame(enterTargetLayout))
+   globalThis.setTimeout(enterTargetLayout,110)
+ }).then(unlisten=>{unlistenFloatingTransition=unlisten})
  void listen<string|{provider?:string}>('usage-updated',event=>{const provider=typeof event.payload==='string'?event.payload:event.payload?.provider||'';void refreshLiveUsage(provider);void refreshSyncHealth()}).then(unlisten=>{unlistenUsageUpdated=unlisten})
  void listen<SyncHealth>('sync-status-updated',event=>{const index=syncHealthItems.value.findIndex(item=>item.source_id===event.payload.source_id);if(index>=0)syncHealthItems.value.splice(index,1,event.payload);else syncHealthItems.value.push(event.payload)}).then(unlisten=>{unlistenSyncStatus=unlisten})
  void listen<SyncJob>('sync-job-updated',event=>{
@@ -410,10 +521,12 @@ onMounted(()=>{
   if(!floatingMode)void refreshSyncHealth()
  if(!floatingMode) void refreshRemoteContent()
  void invoke<CloudSession|null>('cloud_session').then(value=>{cloudSession.value=value}).catch(()=>{})
+ if(tauriRuntime) void invoke<BalanceCapability[]>('balance_capabilities').then(value=>{balanceCapabilities.value=value}).catch(()=>{})
  if(floatingMode) void initializeFloatingWindow()
  if(!floatingMode&&floatingEnabled.value) void invoke('set_floating_window',{enabled:true})
+ if(!floatingMode) void applyFloatingHotkey()
 })
-onUnmounted(()=>{clearInterval(timer);if(floatingSnapTimer)clearTimeout(floatingSnapTimer);if(floatingResizeSaveTimer)clearTimeout(floatingResizeSaveTimer);if(floatingMoveSaveTimer)clearTimeout(floatingMoveSaveTimer);window.removeEventListener('focus',onWindowFocus);window.removeEventListener('token-manager-theme-change',broadcastTheme);window.removeEventListener('token-manager-visual-change',broadcastVisualPreference);window.removeEventListener('token-manager-glass-distortion-change',broadcastGlassDistortion);window.removeEventListener('token-manager-spotlight-change',broadcastSpotlightPreference);window.removeEventListener('token-manager-liquid-appearance-change',broadcastLiquidAppearance);window.removeEventListener('token-manager-chart-color-change',broadcastChartColor);unlistenFloating?.();unlistenSelection?.();unlistenFloatingConfig?.();unlistenFloatingResize?.();unlistenUsageUpdated?.();unlistenSyncStatus?.();unlistenSyncJob?.();unlistenProxyState?.();unlistenProxyJob?.();unlistenProxyTraffic?.();unlistenThemeSync?.();unlistenVisualSync?.();unlistenDistortionSync?.();unlistenSpotlightSync?.();unlistenLiquidAppearanceSync?.();unlistenChartColorSync?.()})
+onUnmounted(()=>{clearInterval(timer);if(floatingSnapTimer)clearTimeout(floatingSnapTimer);if(floatingResizeSaveTimer)clearTimeout(floatingResizeSaveTimer);if(floatingMoveSaveTimer)clearTimeout(floatingMoveSaveTimer);if(floatingTransitionTimer)clearTimeout(floatingTransitionTimer);window.removeEventListener('focus',onWindowFocus);window.removeEventListener('token-manager-theme-change',broadcastTheme);window.removeEventListener('token-manager-visual-change',broadcastVisualPreference);window.removeEventListener('token-manager-glass-distortion-change',broadcastGlassDistortion);window.removeEventListener('token-manager-spotlight-change',broadcastSpotlightPreference);window.removeEventListener('token-manager-liquid-appearance-change',broadcastLiquidAppearance);window.removeEventListener('token-manager-chart-color-change',broadcastChartColor);unlistenFloating?.();unlistenSelection?.();unlistenFloatingConfig?.();unlistenFloatingResize?.();unlistenFloatingTransitionStart?.();unlistenFloatingTransition?.();unlistenUsageUpdated?.();unlistenSyncStatus?.();unlistenSyncJob?.();unlistenProxyState?.();unlistenProxyJob?.();unlistenProxyTraffic?.();unlistenThemeSync?.();unlistenVisualSync?.();unlistenDistortionSync?.();unlistenSpotlightSync?.();unlistenLiquidAppearanceSync?.();unlistenChartColorSync?.();unlistenHotkey?.();unlistenHotkeyError?.()})
 const resetText=computed(()=>{const seconds=Math.max(0,Math.floor((new Date(dashboard.value.resetAt).getTime()-now.value)/1000)); return `${Math.floor(seconds/60)}分${String(seconds%60).padStart(2,'0')}秒`})
 const totalCost=computed(()=>usage.value.reduce((s,x)=>s+x.cost,0))
 const selectedDashboardDef=computed(()=>modelDashboards.value.find(item=>item.key===selectedDashboard.value))
@@ -577,6 +690,21 @@ const codex5hIsReported=computed(()=>Boolean(codexQuota.value?.five_hour))
 const codex7dIsReported=computed(()=>Boolean(codexQuota.value?.seven_day))
 const codexQuotaObservedText=computed(()=>codexQuota.value?.observed_at?new Date(codexQuota.value.observed_at*1000).toLocaleString('zh-CN'):'尚未读取')
 const monthlyBudget=computed(()=>loadLocal('token-manager-monthly-budget',200))
+const monthlyEstimate=ref<MonthlyUsageEstimate|null>(null)
+const monthlyEstimatePercent=computed(()=>{if(!monthlyEstimate.value||monthlyBudget.value<=0)return 0;const actual=monthlyEstimate.value.month_cost/monthlyBudget.value*100;const projected=monthlyEstimate.value.projected_month_cost/monthlyBudget.value*100;return Math.min(100,Math.round(Math.max(actual,projected)))})
+const monthlyEstimateLevel=computed(()=>monthlyEstimatePercent.value>=90?'critical':monthlyEstimatePercent.value>=60?'warning':'normal')
+const codexSessions=computed(()=>{
+  const groups=new Map<string,{session_key:string;project_key:string|null;provider:string;calls:number;tokens:number;cost:number;first_at:string;last_at:string}>()
+  for(const point of codexSeries.value){
+    const raw=point.session_id||'unknown'
+    const key=`codex:${raw}`
+    const atIso=new Date(point.at).toISOString()
+    const existing=groups.get(key)
+    if(existing){existing.calls+=1;existing.tokens+=point.tokens;if(atIso<existing.first_at)existing.first_at=atIso;if(atIso>existing.last_at)existing.last_at=atIso}
+    else{groups.set(key,{session_key:key,project_key:null,provider:'Codex',calls:1,tokens:point.tokens,cost:0,first_at:atIso,last_at:atIso})}
+  }
+  return [...groups.values()]
+})
 const codexInsights=computed(()=>buildCodexInsights(codexSeries.value,used7d.value,budget7d.value,monthlyBudget.value))
 const used5hPercent=computed(()=>Math.min(100,100-remaining5h.value))
 const used7dPercent=computed(()=>Math.min(100,100-remaining7d.value))
@@ -633,7 +761,7 @@ const todayCalls=computed(()=>todayCodexTurns.value+combinedUsage.value.filter(i
 const floatingTodayTokens=computed(()=>selectedDashboard.value==='__all__'?todayTotalTokens.value:selectedDashboard.value==='__codex__'?codexTodayTokens.value:dashboardInput.value+dashboardOutput.value)
 const floatingWeekCost=computed(()=>selectedDashboard.value==='__all__'?weekCost.value:dashboardUsage.value.filter(item=>new Date(item.at).getTime()>=now.value-7*86_400_000).reduce((sum,item)=>sum+item.cost,0))
 const floatingTodayCalls=computed(()=>selectedDashboard.value==='__all__'?todayCalls.value:selectedDashboard.value==='__codex__'?todayCodexTurns.value:dashboardTodayCalls.value)
-function countdownTo(timestamp:number){let seconds=Math.max(0,Math.floor(timestamp-now.value/1000));const days=Math.floor(seconds/86_400);seconds%=86_400;const hours=Math.floor(seconds/3600);seconds%=3600;const minutes=Math.floor(seconds/60);const tail=`${String(seconds%60).padStart(2,'0')} 秒`;return days?`${days} 天 ${hours} 小时 ${minutes} 分 ${tail}`:`${hours} 小时 ${minutes} 分 ${tail}`}
+function countdownTo(timestamp:number){let seconds=Math.max(0,Math.floor(timestamp-now.value/1000));const days=Math.floor(seconds/86_400);seconds%=86_400;const hours=Math.floor(seconds/3600);seconds%=3600;const minutes=Math.floor(seconds/60);const tail=`${String(seconds%60).padStart(2,'0')} 秒`;return days?`${days} 大${hours} 小时 ${minutes} 分 ${tail}`:`${hours} 小时 ${minutes} 分 ${tail}`}
 const codex5hResetText=computed(()=>codexQuota.value?.five_hour?.resets_at?countdownTo(codexQuota.value.five_hour.resets_at):'等待客户端下发')
 const codex7dResetText=computed(()=>{if(codexQuota.value?.seven_day?.resets_at)return countdownTo(codexQuota.value.seven_day.resets_at);const cutoff=now.value/1000-7*86_400;const oldest=codexSeries.value.filter(item=>item.at>=cutoff).sort((a,b)=>a.at-b.at)[0];return oldest?countdownTo(oldest.at+7*86_400):'暂无滚动记录'})
 const modelBalanceRows=computed(()=>modelDashboards.value.map(model=>{const balance=model.kind==='account_model'?accountBalances.value.find(item=>item.account_id===model.accountId&&item.currency==='CNY'):null;const rows=model.kind==='account_model'?usage.value.filter(item=>item.account_id===model.accountId&&item.model===model.model):usageRowsForDashboard(model);const tokens=rows.reduce((sum,item)=>sum+item.input+item.output,0);return{key:model.key,label:model.label,value:balance?`¥${balance.total_balance.toFixed(2)}`:rows.length?`${tokens.toLocaleString()} tokens`:'暂无调用'}}).slice(0,4))
@@ -677,12 +805,15 @@ const floatingDashboardViews=computed<FloatingDashboardView[]>(()=>floatingDashb
  const dataSource=row.kind==='codex'?(codex7dIsReported.value?'Codex 客户端 rate_limits':'个人预算估算'):row.kind==='claude'?'Claude Code 本地日志':row.kind==='all'?'主程序本地统一统计':row.kind==='agent'?`${dashboardDef?.label||row.provider} · 本地观测`:balance?'官方账户余额 + 本地代理':'本地代理 / 日志统计'
  const balanceText=row.kind==='codex'?row.ringLabel:balance?`官方余额 ¥${balance.total_balance.toFixed(2)}`:row.todayTokens?`${row.ringPercent}% 今日 Token 占比`:'暂无真实数据'
  const ringCaption=row.kind==='codex'?(codex7dIsReported.value?'7 天客户端额度':'7 天个人估算'):'今日 Token 占比'
+ const primaryMetricKind:FloatingDashboardView['primaryMetricKind']=row.kind==='codex'&&codex7dIsReported.value?'quota-percent':balance?'balance':'tokens'
+ const primaryMetricLabel=primaryMetricKind==='quota-percent'?'7 天额度':primaryMetricKind==='balance'?'官方余额':'今日 Token'
+ const primaryMetricValue=primaryMetricKind==='quota-percent'?row.ringPercent:primaryMetricKind==='balance'?balance!.total_balance:row.todayTokens
  const codexLatest=row.kind==='codex'||row.kind==='all'?codexSeries.value.reduce((latest,item)=>Math.max(latest,item.at*1000),0):0
  const usageLatest=source.reduce((latest,item)=>Math.max(latest,new Date(item.collected_at||item.at).getTime()||0),0)
  const lastUpdated=Math.max(codexLatest,usageLatest)
  const daily=floatingDailyFor(row.key)
  const hasData=daily.some(item=>item.tokens>0||item.calls>0||item.cached>0||item.cost>0)
- return{...row,weekCost:weekCostValue,weekInput:input,weekOutput:output,weekCached:cached,cacheRate,ringCaption,dataSource,balanceText,lastUpdated:lastUpdated?new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(lastUpdated):'尚未同步',hasData,daily}
+ return{...row,weekCost:weekCostValue,weekInput:input,weekOutput:output,weekCached:cached,cacheRate,ringCaption,dataSource,balanceText,primaryMetricKind,primaryMetricLabel,primaryMetricValue,lastUpdated:lastUpdated?new Intl.DateTimeFormat('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(lastUpdated):'尚未同步',hasData,daily}
 }))
 const floatingVisibleViews=computed(()=>{
   const keys=floatingConfig.value.visibleKeys.length?floatingConfig.value.visibleKeys:[floatingConfig.value.selectedKey]
@@ -733,10 +864,10 @@ const floatingSummaryModules=computed(()=>effectiveFloatingModules.value.filter(
 const effectiveFloatingModules=computed(()=>floatingCustomizing.value?enabledFloatingModules.value:globalMode.value==='simple'?enabledFloatingModules.value.filter(id=>['globalRemaining','todayTokens','warning','todayCalls'].includes(id)).slice(0,4):enabledFloatingModules.value)
 const disabledFloatingModules=computed(()=>floatingConfig.value.order.filter(id=>!floatingConfig.value.enabled.includes(id)))
 const miniFloatingModules=computed(()=>{const allowed=floatingConfig.value.mini.filter(id=>effectiveFloatingModules.value.includes(id));return [...allowed,...effectiveFloatingModules.value.filter(id=>!allowed.includes(id))].slice(0,2)})
-function floatingModuleValue(id:FloatingModuleId){return id==='globalRemaining'?(isApiDashboard.value?(dashboardBalance.value?`¥${dashboardBalance.value.total_balance.toFixed(2)}`:'—'):`${globalRemaining.value}%`):id==='todayTokens'?floatingTodayTokens.value.toLocaleString():id==='estimatedDuration'?`${codexInsights.value.debugHours.toFixed(1)} 小时`:id==='taskCapacity'?`${codexInsights.value.bugFixes} 次修复`:id==='weekCost'?`¥${floatingWeekCost.value.toFixed(2)}`:id==='codexQuota'?`${remaining5h.value}% / ${remaining7d.value}%`:id==='modelBalances'?`${modelBalanceRows.value.length} 个模型`:id==='warning'?(isDeepSeekDashboard.value?(dashboardBalance.value?.is_available?'正常':'余额不可用'):balanceLevel.value==='normal'?'正常':balanceLevel.value==='warning'?'低于20%':'低于10%'):floatingTodayCalls.value.toLocaleString()}
+function floatingModuleValue(id:FloatingModuleId){return id==='globalRemaining'?(isApiDashboard.value?(dashboardBalance.value?`¥${dashboardBalance.value.total_balance.toFixed(2)}`:'—'):`${globalRemaining.value}%`):id==='todayTokens'?floatingTodayTokens.value.toLocaleString():id==='estimatedDuration'?`${codexInsights.value.debugHours.toFixed(1)} 小时`:id==='taskCapacity'?`${codexInsights.value.bugFixes} 次修复`:id==='weekCost'?`¥${floatingWeekCost.value.toFixed(2)}`:id==='codexQuota'?`${remaining5h.value}% / ${remaining7d.value}%`:id==='modelBalances'?`${modelBalanceRows.value.length} 个模型`:id==='warning'?(isDeepSeekDashboard.value?(dashboardBalance.value?.is_available?'正常':'余额不可用'):balanceLevel.value==='normal'?'正常':balanceLevel.value==='warning'?'低于 20%':'低于 10%'):id==='monthlyBudget'?(monthlyEstimate.value?`${monthlyEstimatePercent.value}%`:'—'):floatingTodayCalls.value.toLocaleString()}
 function floatingModuleTitle(id:FloatingModuleId){return floatingModuleCatalog.find(item=>item.id===id)?.title||id}
 function copyFloatingSizes(){return{capsule:{...floatingConfig.value.sizes.capsule},compact:{...floatingConfig.value.sizes.compact},full:{...floatingConfig.value.sizes.full}}}
-function persistFloatingConfig(){const value:FloatingConfigV3={...floatingConfig.value,version:3,enabled:[...floatingConfig.value.enabled],order:[...floatingConfig.value.order],mini:[...floatingConfig.value.mini] as [FloatingModuleId,FloatingModuleId],visibleKeys:[...floatingConfig.value.visibleKeys],pinnedKeys:[...floatingConfig.value.pinnedKeys],expandedKeys:[...floatingConfig.value.expandedKeys],sizes:copyFloatingSizes(),position:floatingConfig.value.position?{...floatingConfig.value.position}:null};try{saveFloatingConfigV3(value)}catch{}void emit('floating-config',value)}
+function persistFloatingConfig(){const value:FloatingConfigV4={...floatingConfig.value,version:4,enabled:[...floatingConfig.value.enabled],order:[...floatingConfig.value.order],mini:[...floatingConfig.value.mini] as [FloatingModuleId,FloatingModuleId],visibleKeys:[...floatingConfig.value.visibleKeys],pinnedKeys:[...floatingConfig.value.pinnedKeys],expandedKeys:[...floatingConfig.value.expandedKeys],sizes:copyFloatingSizes(),position:floatingConfig.value.position?{...floatingConfig.value.position}:null,edgeHandlePosition:floatingConfig.value.edgeHandlePosition?{...floatingConfig.value.edgeHandlePosition}:null};try{saveFloatingConfigV4(value)}catch{}void emit('floating-config',value)}
 function toggleFloatingModule(id:FloatingModuleId,event:Event){const checked=(event.target as HTMLInputElement).checked;floatingConfig.value.enabled=checked?[...new Set([...floatingConfig.value.enabled,id])]:floatingConfig.value.enabled.filter(item=>item!==id);persistFloatingConfig()}
 function toggleFloatingModuleValue(id:string,checked:boolean){const module=id as FloatingModuleId;floatingConfig.value.enabled=checked?[...new Set([...floatingConfig.value.enabled,module])]:floatingConfig.value.enabled.filter(item=>item!==module);persistFloatingConfig()}
 function startFloatingModuleDrag(id:FloatingModuleId){draggedFloatingModule.value=id}
@@ -749,13 +880,161 @@ function setFloatingLayout(layout:'grid'|'list'){floatingConfig.value.layout=lay
 function setFloatingVisible(key:string,checked:boolean){const current=[...floatingConfig.value.visibleKeys];if(checked){if(!current.includes(key))current.push(key)}else if(current.length>1){const index=current.indexOf(key);if(index>=0)current.splice(index,1)}floatingConfig.value.visibleKeys=current;if(!current.includes(floatingConfig.value.selectedKey))floatingConfig.value.selectedKey=current[0]||'__all__';persistFloatingConfig()}
 function reorderFloatingRows(source:string,target:string){const keys=[...floatingConfig.value.visibleKeys];const sourceIndex=keys.indexOf(source),targetIndex=keys.indexOf(target);if(sourceIndex<0||targetIndex<0||sourceIndex===targetIndex)return;keys.splice(sourceIndex,1);keys.splice(targetIndex,0,source);floatingConfig.value.visibleKeys=keys;persistFloatingConfig()}
 function toggleFloatingPin(key:string){floatingConfig.value.pinnedKeys=floatingConfig.value.pinnedKeys.includes(key)?floatingConfig.value.pinnedKeys.filter(item=>item!==key):[...floatingConfig.value.pinnedKeys,key];persistFloatingConfig()}
-async function setFloatingSize(mode:FloatingMode,width:number,height:number){const minimum=floatingMinimumSize(mode);floatingConfig.value.sizes[mode]=mode==='capsule'?{...defaultFloatingSizes.capsule}:{width:Math.max(minimum.width,Math.min(960,Math.round(Number(width)||minimum.width))),height:Math.max(minimum.height,Math.min(1000,Math.round(Number(height)||minimum.height)))};persistFloatingConfig();if(floatingConfig.value.mode===mode)await applyFloatingModeSize()}
-async function setFloatingMode(mode:FloatingMode){floatingConfig.value.mode=mode;floatingCollapsed.value=mode==='capsule';document.documentElement.style.setProperty('--floating-window-radius',mode==='capsule'?'28px':'24px');persistFloatingConfig();await applyFloatingModeSize();if(floatingMode){await nextTick();void reportFloatingSurfaces()}}
- function floatingMinimumSize(mode:FloatingMode){return mode==='capsule'?{width:360,height:152}:mode==='full'?{width:500,height:520}:{width:400,height:300}}
- async function rememberFloatingSize(){if(!floatingMode)return;try{const window=getCurrentWindow();const [size,scale]=await Promise.all([window.innerSize(),window.scaleFactor()]);const mode=floatingConfig.value.mode;const minimum=floatingMinimumSize(mode);floatingConfig.value.sizes[mode]=mode==='capsule'?{...defaultFloatingSizes.capsule}:{width:Math.max(minimum.width,Math.round(size.width/scale)),height:Math.max(minimum.height,Math.round(size.height/scale))};try{saveFloatingConfigV3(floatingConfig.value)}catch{}}catch{}}
-async function applyFloatingModeSize(){const mode=floatingConfig.value.mode;const size=floatingConfig.value.sizes[mode];const radius=mode==='capsule'?28:24;try{await invoke('set_floating_window_mode',{mode,radius,width:size.width,height:size.height,alwaysOnTop:floatingConfig.value.alwaysOnTop,snapToEdges:floatingConfig.value.snapToEdges})}catch{if(floatingMode)try{const window=getCurrentWindow();await window.setSize(new LogicalSize(size.width,size.height));await window.setAlwaysOnTop(floatingConfig.value.alwaysOnTop)}catch{}}}
+async function setFloatingSize(mode:FloatingMode,width:number,height:number){
+ const minimum=floatingMinimumSize(mode)
+ floatingConfig.value.sizes[mode]=mode==='capsule'?{...defaultFloatingSizes.capsule}:{width:Math.max(minimum.width,Math.min(960,Math.round(Number(width)||minimum.width))),height:Math.max(minimum.height,Math.min(1000,Math.round(Number(height)||minimum.height)))}
+ persistFloatingConfig()
+ if(floatingConfig.value.mode===mode&&floatingConfig.value.presentation==='window')await transitionFloatingWindow(mode,'window')
+}
+function floatingMotionAllowed(){return floatingConfig.value.animateModeChanges&&motionEnabled.value&&!matchMedia('(prefers-reduced-motion: reduce)').matches}
+async function transitionFloatingWindow(mode:FloatingMode,presentation:'window'|'edge-handle',forceAnimation?:boolean){
+  floatingTransitioning.value=true
+   floatingTransitionStage.value='leaving'
+  if(floatingTransitionTimer)clearTimeout(floatingTransitionTimer)
+  const requestRevision=++floatingTransitionRequestRevision
+  const animate=forceAnimation??floatingMotionAllowed()
+  // 视觉过渡代次必须是严格单调递增的整数。此前 Date.now()*1000+取模 在
+  // 计数器跨越 1000 整数倍且两次切换落在同一毫秒时会产生倒挂，对端窗口
+  // 会把最新请求误判为旧请求而丢弃遮罩广播，造成动画全程旧内容可见。
+  const visualRevision=++floatingVisualRevisionSeed
+  floatingVisualTransitionRevision=Math.max(floatingVisualTransitionRevision,visualRevision)
+  const size=presentation==='edge-handle'?{width:28,height:46}:floatingConfig.value.sizes[mode]
+  const radius=presentation==='edge-handle'?14:mode==='capsule'?28:24
+  // 先取消上一段原生过渡；随后只启动最新一次请求。这样快速点击三种形态时
+  // 不会把旧动画排进队列，也不会让旧尺寸在最后一帧覆盖用户的新选择。
+  await invoke('cancel_floating_window_transition').catch(()=>{})
+  // 广播携带目标形态：主窗口与悬浮窗据此更新各自的“期望形态”，complete
+  // 事件只有与期望形态一致才被接受，杜绝被取消的旧请求迟到提交旧 DOM。
+  await emit('floating-window-transition-start',{revision:visualRevision,animate,mode,presentation}).catch(()=>{})
+  if(animate){
+    // 仅让模式内容快速退场；品牌标题和底部状态保持可见，再启动原生边界动画。
+    // 这样既隔离重排，也不会在切换中出现一整块空白窗口。
+    // 72ms > 数据区 64ms 淡出：让淡出自然完成再隐藏，避免半透明残影被硬切。
+    await new Promise<void>(resolve=>globalThis.setTimeout(resolve,72))
+    if(requestRevision!==floatingTransitionRequestRevision)return
+    floatingTransitionStage.value='resizing'
+    await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())))
+  }
+  const swapLayout=()=>{
+    if(requestRevision!==floatingTransitionRequestRevision)return
+     floatingRenderedMode.value=mode
+     floatingRenderedPresentation.value=presentation
+     document.documentElement.classList.toggle('floating-handle-presentation',presentation==='edge-handle')
+     document.documentElement.style.setProperty('--floating-window-radius',presentation==='edge-handle'?'14px':mode==='capsule'?'28px':'24px')
+    // 新形态的数据区保持隐藏，必须等原生窗口真正到达终点后再淡入。
+    // 标题与状态栏不卸载，因此形态变化仍有清晰、连续的视觉锚点。
+    floatingTransitionStage.value='resizing'
+  }
+  const run=async()=>{
+    if(requestRevision!==floatingTransitionRequestRevision)return
+    try{
+      const transitionId=await invoke<number>('animate_floating_window_transition',{mode,presentation,width:size.width,height:size.height,radius,alwaysOnTop:floatingConfig.value.alwaysOnTop,animate})
+      if(requestRevision!==floatingTransitionRequestRevision)return
+      floatingNativeTransitionId=Math.max(floatingNativeTransitionId,transitionId)
+    }catch{
+      if(requestRevision!==floatingTransitionRequestRevision)return
+      floatingRenderedMode.value=mode
+      floatingRenderedPresentation.value=presentation
+      document.documentElement.classList.toggle('floating-handle-presentation',presentation==='edge-handle')
+      floatingTransitioning.value=false
+      floatingTransitionStage.value='idle'
+      persistFloatingConfig()
+      if(floatingMode&&presentation==='window')try{const window=getCurrentWindow();await window.setSize(new LogicalSize(size.width,size.height));await window.setAlwaysOnTop(floatingConfig.value.alwaysOnTop)}catch{}
+    }
+  }
+  if(animate){
+    // 动画期间始终保留已经完全遮住的旧布局；目标布局只由原生完成事件在终点提交。
+    await run()
+  }else{
+    swapLayout()
+    await run()
+  }
+}
+async function setFloatingMode(mode:FloatingMode){
+ floatingConfig.value.mode=mode
+ floatingConfig.value.lastExpandedMode=mode
+ floatingConfig.value.presentation='window'
+ floatingCollapsed.value=mode==='capsule'
+ document.documentElement.style.setProperty('--floating-window-radius',mode==='capsule'?'28px':'24px')
+ if(tauriRuntime&&floatingEnabled.value)await transitionFloatingWindow(mode,'window')
+ else{floatingRenderedMode.value=mode;floatingRenderedPresentation.value='window';persistFloatingConfig()}
+}
+async function collapseFloatingToHandle(){
+ if(!floatingConfig.value.edgeHandleEnabled||floatingConfig.value.presentation==='edge-handle')return
+ floatingConfig.value.lastExpandedMode=floatingConfig.value.mode
+ floatingConfig.value.presentation='edge-handle'
+ if(tauriRuntime&&floatingEnabled.value)await transitionFloatingWindow(floatingConfig.value.mode,'edge-handle')
+ else persistFloatingConfig()
+}
+async function selectFloatingHandleFromSettings(){
+ floatingConfig.value.edgeHandleEnabled=true
+ floatingConfig.value.lastExpandedMode=floatingConfig.value.mode
+ floatingConfig.value.presentation='edge-handle'
+ if(!floatingEnabled.value){
+  floatingEnabled.value=true
+  localStorage.setItem('token-manager-floating','1')
+  try{await invoke('set_floating_window',{enabled:true})}catch(error){floatingEnabled.value=false;localStorage.setItem('token-manager-floating','0');alert(String(error));return}
+ }
+ await transitionFloatingWindow(floatingConfig.value.mode,'edge-handle')
+}
+async function expandFloatingFromHandle(){
+  // 把手悬停只负责预览；明确单击统一进入胶囊，避免用户误以为悬停已切换形态。
+  const mode:FloatingMode='capsule'
+  floatingConfig.value.mode=mode
+  floatingConfig.value.lastExpandedMode=mode
+  floatingConfig.value.presentation='window'
+ if(tauriRuntime&&floatingEnabled.value)await transitionFloatingWindow(mode,'window')
+ else persistFloatingConfig()
+}
+async function peekFloatingHandle(){
+ if(!floatingMode||floatingConfig.value.presentation!=='edge-handle'||floatingConfig.value.edgeHandleTrigger!=='hover')return
+ // 悬停只扩展贴边把手的临时可视区域，不改变 mode/presentation；点击时
+ // 才恢复用户上次的胶囊、紧凑或完整形态。
+ const mode=floatingConfig.value.lastExpandedMode||floatingConfig.value.mode
+ const size={width:288,height:84}
+ // 与普通切换一致：广播 start 让对端窗口同步期望形态与过渡状态。
+ // 否则对端窗口会在随后 restore 的 complete 形态校验中拒绝回到把手。
+ const visualRevision=++floatingVisualRevisionSeed
+ floatingVisualTransitionRevision=Math.max(floatingVisualTransitionRevision,visualRevision)
+ floatingExpectedMode=mode
+ floatingExpectedPresentation='edge-handle'
+ await emit('floating-window-transition-start',{revision:visualRevision,animate:false,mode,presentation:'edge-handle'}).catch(()=>{})
+  floatingTransitioning.value=true
+   floatingTransitionStage.value='leaving'
+  document.documentElement.classList.add('floating-handle-presentation')
+  document.documentElement.style.setProperty('--floating-window-radius','22px')
+ try{floatingPeekTransitionId=await invoke<number>('peek_floating_handle',{mode,width:size.width,height:size.height,alwaysOnTop:floatingConfig.value.alwaysOnTop});floatingNativeTransitionId=Math.max(floatingNativeTransitionId,floatingPeekTransitionId)}catch{floatingTransitioning.value=false;floatingTransitionStage.value='idle'}
+}
+ async function restoreFloatingHandle(){
+  if(!floatingMode||floatingConfig.value.presentation!=='edge-handle')return
+  const restoreMode=floatingConfig.value.lastExpandedMode||'capsule'
+  // 广播 start（目标为把手形态）让对端窗口同步期望形态；restore 的
+  // complete 才能通过对端窗口的形态校验并一起回到把手。
+  const visualRevision=++floatingVisualRevisionSeed
+  floatingVisualTransitionRevision=Math.max(floatingVisualTransitionRevision,visualRevision)
+  floatingExpectedMode=restoreMode
+  floatingExpectedPresentation='edge-handle'
+  await emit('floating-window-transition-start',{revision:visualRevision,animate:false,mode:restoreMode,presentation:'edge-handle'}).catch(()=>{})
+  floatingTransitioning.value=true
+  floatingTransitionStage.value='resizing'
+  if(floatingTransitionTimer)clearTimeout(floatingTransitionTimer)
+  try{
+   const transitionId=await invoke<number>('restore_floating_handle',{mode:restoreMode,alwaysOnTop:floatingConfig.value.alwaysOnTop})
+   floatingNativeTransitionId=Math.max(floatingNativeTransitionId,transitionId)
+  }catch{
+   floatingTransitioning.value=false
+   floatingTransitionStage.value='idle'
+  }
+ }
+function floatingMinimumSize(mode:FloatingMode){return mode==='capsule'?{width:360,height:152}:mode==='full'?{width:560,height:560}:{width:460,height:320}}
+async function rememberFloatingSize(){if(!floatingMode||floatingTransitioning.value||floatingConfig.value.presentation==='edge-handle')return;try{const window=getCurrentWindow();const [size,scale]=await Promise.all([window.innerSize(),window.scaleFactor()]);const mode=floatingConfig.value.mode;const minimum=floatingMinimumSize(mode);floatingConfig.value.sizes[mode]=mode==='capsule'?{...defaultFloatingSizes.capsule}:{width:Math.max(minimum.width,Math.round(size.width/scale)),height:Math.max(minimum.height,Math.round(size.height/scale))};try{saveFloatingConfigV4(floatingConfig.value)}catch{}}catch{}}
+async function applyFloatingModeSize(){
+ const mode=floatingConfig.value.mode
+ floatingRenderedMode.value=mode
+ await transitionFloatingWindow(mode,floatingConfig.value.presentation,false)
+}
 async function refreshFloatingRenderStatus(){if(!floatingMode||!tauriRuntime)return;try{floatingRenderStatus.value=await invoke<FloatingRenderStatusView>('get_floating_render_status')}catch{floatingRenderStatus.value={backend:'translucent',state:'degraded',fps:0,detail:'原生状态接口不可用，使用半透明材质'}}}
-async function configureFloatingRenderer(){if(!floatingMode||!tauriRuntime)return;try{floatingRenderStatus.value=await invoke<FloatingRenderStatusView>('configure_floating_renderer',{config:{enabled:false,quality:'performance',tone:'solid',transparency:0,distortion:0}})}catch{floatingRenderStatus.value={backend:'translucent',state:'stopped',fps:0,detail:'悬浮窗使用主题纯色材质'}}}
+async function configureFloatingRenderer(){if(!floatingMode||!tauriRuntime)return;try{const liquid=appTheme.value.material==='liquid';floatingRenderStatus.value=await invoke<FloatingRenderStatusView>('configure_floating_renderer',{config:liquid?{enabled:true,quality:glassQuality.value,tone:liquidTone.value==='clear'?'clear':'dark',transparency:liquidTransparency.value,distortion:glassDistortion.value}:{enabled:false,quality:'performance',tone:'solid',transparency:0,distortion:0}})}catch{floatingRenderStatus.value={backend:'translucent',state:'stopped',fps:0,detail:'悬浮窗使用主题纯色材质'}}}
 async function reportFloatingSurfaces(){if(!floatingMode||!tauriRuntime)return;await invoke('update_floating_surfaces',{surfaces:[]}).catch(()=>{})}
 async function snapFloatingToMonitor(){if(!floatingMode||!floatingConfig.value.snapToEdges)return;try{const current=getCurrentWindow();const monitor=await currentMonitor();if(!monitor)return;const [position,size,scale]=await Promise.all([current.outerPosition(),current.outerSize(),current.scaleFactor()]);const area=monitor.workArea;const threshold=Math.round(14*scale);let x=position.x;let y=position.y;const left=area.position.x;const top=area.position.y;const right=left+area.size.width-size.width;const bottom=top+area.size.height-size.height;if(Math.abs(x-left)<=threshold)x=left;else if(Math.abs(x-right)<=threshold)x=right;if(Math.abs(y-top)<=threshold)y=top;else if(Math.abs(y-bottom)<=threshold)y=bottom;if(x!==position.x||y!==position.y)await current.setPosition(new PhysicalPosition(x,y))}catch{}}
 async function initializeFloatingWindow(){
@@ -770,6 +1049,7 @@ async function initializeFloatingWindow(){
  await reportFloatingSurfaces()
  try{
    unlistenFloatingResize=await window.onResized(async event=>{
+     if(floatingTransitioning.value||floatingConfig.value.presentation==='edge-handle')return
      const scale=await window.scaleFactor()
      const mode=floatingConfig.value.mode
      const minimum=floatingMinimumSize(mode)
@@ -789,6 +1069,16 @@ async function initializeFloatingWindow(){
  }catch{}
  try{
    await window.onMoved(event=>{
+     if(floatingTransitioning.value)return
+     if(floatingConfig.value.presentation==='edge-handle'){
+       floatingConfig.value.edgeHandlePosition={x:event.payload.x,y:event.payload.y}
+       if(floatingMoveSaveTimer)clearTimeout(floatingMoveSaveTimer)
+       floatingMoveSaveTimer=globalThis.setTimeout(()=>{
+         floatingMoveSaveTimer=undefined
+         persistFloatingConfig()
+       },180)
+       return
+     }
      floatingConfig.value.position={x:event.payload.x,y:event.payload.y}
      if(floatingMoveSaveTimer)clearTimeout(floatingMoveSaveTimer)
      floatingMoveSaveTimer=globalThis.setTimeout(()=>{
@@ -800,10 +1090,17 @@ async function initializeFloatingWindow(){
    })
  }catch{}
 }
-async function startFloatingDrag(event:MouseEvent){if(!floatingMode||event.button!==0||(event.target as HTMLElement).closest('button,select'))return;try{await getCurrentWindow().startDragging()}catch{}}
- async function startFloatingResizeDirection(direction:string,event:MouseEvent){if(!floatingMode||event.button!==0)return;event.preventDefault();event.stopPropagation();try{await getCurrentWindow().startResizeDragging(direction as never)}catch{}}
+async function startFloatingDrag(event:MouseEvent){
+ if(!floatingMode||floatingTransitioning.value||event.button!==0)return
+ const target=event.target as HTMLElement
+ // 贴边把手本身兼具“单击进入胶囊”和拖动能力；其拖动事件不能被通用按钮拦截。
+ if(target.closest('button,select')&&!target.closest('.edge-handle'))return
+ try{await getCurrentWindow().startDragging()}catch{}
+}
+ async function startFloatingResizeDirection(direction:string,event:MouseEvent){if(!floatingMode||floatingTransitioning.value||floatingConfig.value.presentation==='edge-handle'||event.button!==0)return;event.preventDefault();event.stopPropagation();try{await getCurrentWindow().startResizeDragging(direction as never)}catch{}}
  async function setFloatingInteraction(_mode:FloatingInteractionMode){const mode:FloatingInteractionMode='interactive';floatingConfig.value.interaction=mode;persistFloatingConfig();if(tauriRuntime)await invoke('set_floating_interaction_mode',{mode}).catch(()=>{})}
  async function toggleFloatingAlwaysOnTop(){floatingConfig.value.alwaysOnTop=!floatingConfig.value.alwaysOnTop;persistFloatingConfig();if(floatingMode)await getCurrentWindow().setAlwaysOnTop(floatingConfig.value.alwaysOnTop).catch(()=>{})}
+function setFloatingHotkeyFromSettings(enabled:boolean,combo:string){floatingHotkey.value={enabled,combo};void applyFloatingHotkey()}
 // 主窗口使用应用内标题栏，避免 Windows 原生白色标题栏破坏主题连续性。
 async function minimizeMainWindow(){if(floatingMode)return;try{await getCurrentWindow().minimize()}catch{}}
 async function toggleMainWindowMaximize(){if(floatingMode)return;try{await getCurrentWindow().toggleMaximize()}catch{}}
@@ -851,9 +1148,14 @@ async function refreshLiveUsage(provider=''){
  isSyncing.value=true
  let success=false
  try{
-  usage.value=await invoke<Usage[]>('list_usage_v2',{days:floatingMode?7:30})
-  accountBalances.value=await invoke<AccountBalance[]>('list_account_balances')
-  if(provider==='DeepSeek'&&selectedDashboardDef.value?.provider==='DeepSeek')deepseekBalanceHistory.value=await invoke<BalancePoint[]>('list_balance_history',{accountId:selectedDashboardDef.value.accountId,days:30})
+  const [usageRows,balanceRows,balanceHistory]=await Promise.all([
+   invoke<Usage[]>('list_usage_v2',{days:floatingMode?7:30}),
+   invoke<AccountBalance[]>('list_account_balances'),
+   provider==='DeepSeek'&&selectedDashboardDef.value?.provider==='DeepSeek'?invoke<BalancePoint[]>('list_balance_history',{accountId:selectedDashboardDef.value.accountId,days:30}):Promise.resolve(null)
+  ])
+  usage.value=usageRows
+  accountBalances.value=balanceRows
+  if(balanceHistory)deepseekBalanceHistory.value=balanceHistory
   lastRefreshed.value=Date.now()
   success=true
  }catch(error){balanceError.value=String(error)}
@@ -885,10 +1187,19 @@ async function syncFloatingData(){
 }
 async function maybeSendBudgetAlert(){
  const remaining=Math.min(remaining5h.value,remaining7d.value);const level=remaining<=10?10:remaining<=20?20:0
- if(!level)return
- const key=`token-manager-budget-alert-${level}-${localDayKey(new Date())}`
- if(localStorage.getItem(key))return
- try{await invoke('send_budget_alert',{level,remaining});localStorage.setItem(key,'1')}catch{}
+ if(level){
+  const key=`token-manager-budget-alert-${level}-${localDayKey(new Date())}`
+  if(!localStorage.getItem(key)){try{await invoke('send_budget_alert',{level,remaining});localStorage.setItem(key,'1')}catch{}}
+ }
+ // 月度预算预警：按「已用与月底预计」中较高的占用率触发，每档每月提醒一次。
+ if(monthlyEstimate.value&&monthlyBudget.value>0){
+  const percent=monthlyEstimatePercent.value
+  if(percent>=60){
+   const monthlyLevel=percent>=90?10:20
+   const key=`token-manager-monthly-alert-${monthlyLevel}-${monthlyEstimate.value.month}`
+   if(!localStorage.getItem(key)){try{await invoke('send_budget_alert',{level:monthlyLevel,remaining:100-percent,kind:'monthly'});localStorage.setItem(key,'1')}catch{}}
+  }
+ }
 }
 async function syncData(forceArena = false, queueSources = true){
  if(isSyncing.value) return
@@ -898,11 +1209,12 @@ async function syncData(forceArena = false, queueSources = true){
    // 通用 Agent 同步只提交后台任务；Codex 专属数据继续直接读取旧版状态库和会话库。
    if(queueSources)void syncReliabilitySource(undefined,true)
    // 桌面端读取本机 Codex 状态库；浏览器预览没有 Tauri 后端时保持“未连接”。
-    const [, , , events,snapshot,windowUsage,series,quota,claudeEvents]=await Promise.all([
+    const [, , , events,monthly,snapshot,windowUsage,series,quota,claudeEvents]=await Promise.all([
      refreshCcSwitch(),
      refreshAccounts(),
      refreshBalanceData(true),
     invoke<Usage[]>('list_usage_v2',{days:30}),
+    invoke<MonthlyUsageEstimate|null>('monthly_usage_estimate').catch(()=>null),
     invoke<{total_tokens:number;active_thread_tokens:number;updated_at_ms:number}>('codex_snapshot').catch(()=>null),
    invoke<{five_hour_used:number;seven_day_used:number;budget:{five_hour_limit:number;seven_day_limit:number}}>('codex_window_usage').catch(()=>null),
     invoke<CodexUsagePoint[]>('codex_usage_series').catch(()=>[]),
@@ -911,6 +1223,7 @@ async function syncData(forceArena = false, queueSources = true){
      page.value==='arena' && forceArena === true ? arenaCenter.value?.refresh(true) : Promise.resolve()
    ])
    usage.value=events
+   monthlyEstimate.value=monthly
   if(snapshot){codexTokens.value=snapshot.total_tokens
   codexActiveTokens.value=snapshot.active_thread_tokens
   codexUpdatedAt.value=snapshot.updated_at_ms>0&&snapshot.updated_at_ms<1_000_000_000_000?snapshot.updated_at_ms*1000:snapshot.updated_at_ms}
@@ -1040,7 +1353,7 @@ async function startAllProxies(requestedAgentId?:string){
   lastProxyRequestAt.value=0
   lastProxyTraffic.value=null
   allProxyStatus.value=requestedAgentId
-   ?`代理任务已提交 · ${job.id}`
+   ?`代理任务已提交· ${job.id}`
    :`一键接入已提交 · ${accountIds.length} 个账户代理 + ${agentIds.length} 个本地 Agent（自动识别）`
  }catch(error){
   allProxyStatus.value=`无法建立数据通道 · ${String(error)}`
@@ -1105,7 +1418,7 @@ async function saveAgentSource(agent:LocalAgentDefinition,path?:string,enabled=t
  try{
   await invoke<SyncSourceConfig>('configure_agent_source',{config})
   const job=enabled?await invoke<SyncJob>('start_sync_source',{sourceId:config.id,force:false}):null
-  agentActionStatus.value={...agentActionStatus.value,[agent.id]:job?`后台接入任务已提交 · ${job.id}`:'已停用'}
+  agentActionStatus.value={...agentActionStatus.value,[agent.id]:job?`后台接入任务已提交· ${job.id}`:'已停用'}
   await refreshSyncHealth()
  }catch(error){agentActionStatus.value={...agentActionStatus.value,[agent.id]:String(error)}}
 }
@@ -1141,7 +1454,7 @@ async function syncOpenCodeLocalUsage(silent=false){
  }finally{opencodeLocalSyncing.value=false}
 }
 async function chooseOpenCodeLocalSource(){
- const path=await open({directory:true,multiple:false,title:'选择 OpenCode 数据目录（可包含 opencode.db、JSON 或 JSONL）'})
+ const path=await open({directory:true,multiple:false,title:'选择 OpenCode 数据目录（可包含 opencode.db、JSON 或 JSONL，'})
  if(typeof path!=='string')return
  opencodeLocalPath.value=path
  opencodePathManual.value=true
@@ -1240,7 +1553,25 @@ async function cloudCodeLogin(baseUrl:string,email:string,code:string){cloudStat
 async function logoutCloud(){try{await invoke('cloud_logout');cloudSession.value=null;cloudStatus.value='已退出云账户'}catch(error){cloudStatus.value=`退出失败：${String(error)}`}}
 async function createCloudTransfer(password:string,ttlHours:number,oneTime:boolean){if(password.length<8){cloudStatus.value='迁移密码至少需要 8 个字符';return}cloudStatus.value='正在本机加密并创建链接…';try{const result=await invoke<CloudTransfer>('cloud_create_transfer',{password,uiState:collectUiState(),ttlHours,oneTime});cloudTransferLink.value=result.link;cloudStatus.value=`链接已创建，将于 ${new Date(result.expires_at).toLocaleString('zh-CN')} 过期`}catch(error){cloudStatus.value=`创建失败：${String(error)}`}}
 async function importCloudTransfer(link:string,password:string){if(password.length<8){cloudStatus.value='请输入创建链接时使用的迁移密码';return}cloudStatus.value='正在下载密文并在本机解密…';try{const state=await invoke<Record<string,string>>('cloud_import_transfer',{link,password});for(const [key,value] of Object.entries(state))localStorage.setItem(key,value);cloudStatus.value='云端迁移完成，正在重新载入';setTimeout(()=>location.reload(),500)}catch(error){cloudStatus.value=`迁移失败：${String(error)}`}}
-async function refreshRemoteContent(){lastContentRefresh.value=Date.now();const baseUrl=currentCloudBaseUrl();try{remoteContent.value=await invoke<RemoteContentItem[]>('cloud_public_content',{baseUrl})}catch{/* 公告服务离线不影响本地监控 */}}
+async function refreshRemoteContent(){
+  lastContentRefresh.value=Date.now()
+  const now=new Date().toISOString()
+  const apply=(items:RemoteContentItem[])=>{
+    remoteContent.value=items.filter(item=>item.enabled&&item.starts_at<=now&&(!item.ends_at||item.ends_at>now))
+  }
+  // 公告/广告优先走 GitHub 静态 JSON，避免云后台余额耗尽导致客户端公告失效。
+  try{
+    const response=await fetch(GITHUB_STATIC_CONTENT_URL,{cache:'no-store'})
+    if(response.ok){
+      const items=await response.json() as RemoteContentItem[]
+      if(Array.isArray(items)){apply(items);return}
+    }
+  }catch{/* 静态源失败时回退云后端*/}
+  try{
+    const items=await invoke<RemoteContentItem[]>('cloud_public_content',{baseUrl:currentCloudBaseUrl()})
+    apply(items)
+  }catch{/* 公告服务离线不影响本地监控*/}
+}
 /** 无需登录的匿名设备心跳：随机安装标识只用于去重，不包含邮箱、机器名或硬件信息。 */
 async function sendAppPresence(event:'launch'|'heartbeat'){
  lastPresencePing=Date.now();presenceEventSeq+=1
@@ -1259,12 +1590,14 @@ function openRemoteItem(item:RemoteContentItem){if(item.action_url)void openUrl(
 function collectUiState(){const state:Record<string,string>={};for(let index=0;index<localStorage.length;index++){const key=localStorage.key(index);if(key?.startsWith('token-manager-'))state[key]=localStorage.getItem(key)||''}return state}
 async function exportBackup(){backupStatus.value='';if(backupPassword.value.length<8){backupStatus.value='迁移密码至少需要 8 个字符';return}const path=await save({defaultPath:`Token-Manager-${new Date().toISOString().slice(0,10)}.tmbak`,filters:[{name:'Token Manager 加密备份',extensions:['tmbak']}]});if(!path)return;try{await invoke('export_encrypted_backup',{path,password:backupPassword.value,uiState:collectUiState()});backupStatus.value='加密备份已导出'}catch(error){backupStatus.value=`导出失败：${String(error)}`}}
 async function importBackup(){backupStatus.value='';if(backupPassword.value.length<8){backupStatus.value='请输入导出时使用的迁移密码';return}const path=await open({multiple:false,filters:[{name:'Token Manager 加密备份',extensions:['tmbak']}]});if(typeof path!=='string')return;try{const state=await invoke<Record<string,string>>('import_encrypted_backup',{path,password:backupPassword.value});for(const [key,value] of Object.entries(state))localStorage.setItem(key,value);backupStatus.value='迁移完成，正在重新载入';setTimeout(()=>location.reload(),500)}catch(error){backupStatus.value=`导入失败：${String(error)}`}}
+async function exportLocalBackup(){localBackupStatus.value='';const path=await save({defaultPath:`Token-Manager-local-backup-${new Date().toISOString().slice(0,10)}.tmbackup`,filters:[{name:'Token Manager 本机备份',extensions:['tmbackup']}]});if(!path)return;try{await invoke('export_local_backup',{path,uiState:collectUiState()});localBackupStatus.value='本机备份已导出（仅限本机此 Windows 账户恢复）'}catch(error){localBackupStatus.value=`导出失败：${String(error)}`}}
+async function importLocalBackup(){localBackupStatus.value='';const path=await open({multiple:false,filters:[{name:'Token Manager 本机备份',extensions:['tmbackup']}]});if(typeof path!=='string')return;try{const state=await invoke<Record<string,string>>('import_local_backup',{path});for(const [key,value] of Object.entries(state))localStorage.setItem(key,value);localBackupStatus.value='本机备份已恢复，正在重新载入';setTimeout(()=>location.reload(),500)}catch(error){localBackupStatus.value=`恢复失败：${String(error)}`}}
 </script>
 <template>
  <!-- 旧版模块式悬浮窗模板保留在版本历史中；v0.6.5 起改用下方按仪表盘分类的结构。
  <main v-if="false" class="floating-shell" :class="[{collapsed:floatingCollapsed},`mode-${globalMode}`]" :style="appThemeStyle">
   <header @mousedown="startFloatingDrag"><div><b>Token Manager <em>v{{appVersion}}</em></b><select v-if="!floatingCollapsed" aria-label="切换悬浮窗模型" :value="selectedDashboard" @change="changeFloatingDashboard"><option value="__all__">全部模型 · 全局统计</option><option value="__codex__">Codex · 专属监控</option><option v-for="item in modelDashboards" :value="item.key">{{item.label}}</option></select><small v-else>迷你模式</small></div><nav aria-label="悬浮窗控制"><button v-if="!floatingCollapsed" @click="floatingCustomizing=!floatingCustomizing">{{floatingCustomizing?'完成':'自定义'}}</button><button v-if="!floatingCollapsed" :class="{proxyLive:proxyEndpoints.length}" :title="proxyEndpoints.length?'API 数据通道实时运行':'建立 API 数据通道'" :aria-label="proxyEndpoints.length?'API 数据通道实时运行':'建立 API 数据通道'" @click="startAllProxies()"><ProxyGatewayIcon class="compact" /></button><button v-if="!floatingCollapsed" :title="floatingConfig.layout==='grid'?'切换为单列':'切换为卡片网格'" :aria-label="floatingConfig.layout==='grid'?'切换为单列布局':'切换为卡片网格布局'" @click="setFloatingLayout(floatingConfig.layout==='grid'?'list':'grid')">{{floatingConfig.layout==='grid'?'☷':'▦'}}</button><button :title="floatingCollapsed?'展开':'折叠'" :aria-label="floatingCollapsed?'展开悬浮窗':'折叠悬浮窗'" @click="toggleFloatingCollapsed">{{floatingCollapsed?'＋':'−'}}</button><button title="关闭悬浮窗" aria-label="关闭悬浮窗" @click="closeFloating">×</button></nav></header>
-   <div v-if="floatingCollapsed" class="mini-core-row"><span v-for="id in miniFloatingModules" :class="`mini-${id}`"><i v-if="id==='globalRemaining'||id==='codexQuota'" class="mini-ring-progress" :style="{background:`conic-gradient(${balanceLevel==='critical'?'#FF3B30':balanceLevel==='warning'?'#FF9500':'#34C759'} ${globalRemaining}%,#F2F2F7 0)`}"><em>{{globalRemaining}}%</em></i><div v-else-if="id==='todayTokens'" class="mini-collapsed-bars"><i v-for="bar in floatingBars" :style="{height:bar.height+'%'}" :title="`${bar.label} · ${bar.tokens.toLocaleString()} Token`"></i></div><template v-else><small>{{floatingModuleTitle(id)}}</small><b>{{floatingModuleValue(id)}}</b></template></span></div>
+   <div v-if="floatingCollapsed" class="mini-core-row"><span v-for="id in miniFloatingModules" :class="`mini-${id}`"><i v-if="id==='globalRemaining'||id==='codexQuota'" class="mini-ring-progress" :style="{background:`conic-gradient(${balanceLevel==='critical'?'#FF3B30':balanceLevel==='warning'?'#E8B04B':'#34C759'} ${globalRemaining}%,#F2F2F7 0)`}"><em>{{globalRemaining}}%</em></i><div v-else-if="id==='todayTokens'" class="mini-collapsed-bars"><i v-for="bar in floatingBars" :style="{height:bar.height+'%'}" :title="`${bar.label} · ${bar.tokens.toLocaleString()} Token`"></i></div><template v-else><small>{{floatingModuleTitle(id)}}</small><b>{{floatingModuleValue(id)}}</b></template></span></div>
   <TransitionGroup v-else name="floating-reflow" tag="div" class="floating-modules" :class="floatingConfig.layout+'-layout'">
    <section v-for="id in effectiveFloatingModules" :key="id" class="floating-module" :class="`module-${id}`" @dragover.prevent @drop="dropFloatingModule(id)">
      <div v-if="floatingCustomizing" class="floating-card-actions"><button class="floating-drag-handle" draggable="true" title="按住拖动调整位置" :aria-label="`拖动 ${floatingModuleTitle(id)} 调整位置`" @dragstart="startFloatingModuleDrag(id)" @dragend="draggedFloatingModule=null"><span aria-hidden="true">⠿</span> 拖动</button><button class="floating-remove" title="从悬浮窗移除" @click="toggleFloatingModuleValue(id,false)">删除</button></div>
@@ -1274,13 +1607,14 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
     <template v-else-if="id==='taskCapacity'"><div class="floating-module-head"><span>可执行任务数量</span><strong>{{codexInsights.bugFixes}} 次</strong></div><small>脚本 {{codexInsights.scripts}} · 重构 {{codexInsights.refactors}} · Bug {{codexInsights.bugFixes}}</small></template>
     <template v-else-if="id==='weekCost'"><div class="floating-module-head"><span>{{selectedDashboard==='__all__'?'本周总消耗金额':'当前模型本周金额'}}</span><strong><AnimatedNumber :value="floatingWeekCost" :decimals="2" prefix="¥" /></strong></div><small>最近 7 天已计价 API 调用</small></template>
     <template v-else-if="id==='codexQuota'"><div class="floating-module-head"><span>Codex 5 小时余额</span><strong>{{remaining5h}}%</strong></div><div class="track"><span :style="{width:used5hPercent+'%'}"></span></div><div class="floating-module-head sub"><span>7 天滚动额度</span><strong>{{remaining7d}}%</strong></div><small>下一笔额度释放倒计时 {{codex7dResetText}}</small></template>
+    <template v-else-if="id==='monthlyBudget'"><div class="floating-module-head"><span>本月预算预估</span><strong>{{monthlyEstimate?`¥${monthlyEstimate.projected_month_cost.toFixed(0)}`:'—'}}</strong></div><div class="track"><span :style="{width:monthlyEstimatePercent+'%',background:monthlyEstimateLevel==='critical'?'#FF3B30':monthlyEstimateLevel==='warning'?'#E8B04B':'#34C759'}"></span></div><small>{{monthlyEstimate?`已用 ¥${monthlyEstimate.month_cost.toFixed(2)} · 月底预计 ¥${monthlyEstimate.projected_month_cost.toFixed(2)} · 预算 ¥${monthlyBudget}（本地估算）`:'本地估算，非官方账单'}}</small></template>
     <template v-else-if="id==='modelBalances'"><div class="floating-module-head"><span>各模型分项余额</span><strong>{{modelBalanceRows.length}}</strong></div><div class="model-balance-list"><span v-if="!modelBalanceRows.length">尚未添加模型仪表盘</span><span v-for="row in modelBalanceRows"><b>{{row.label}}</b><small>{{row.value}} · 官方余额视接口权限</small></span></div></template>
     <template v-else-if="id==='warning'"><div class="balance-alert" :class="isDeepSeekDashboard?(dashboardBalance?.is_available?'normal':'critical'):balanceLevel">{{floatingModelNotice}}</div></template>
     <template v-else-if="id==='cacheChart'"><div class="floating-module-head"><span>缓存命中率</span><strong>{{dashboardCacheRate}}%</strong></div><div class="floating-ring floating-interactive-chart" tabindex="0" :aria-label="`缓存命中率 ${dashboardCacheRate}%，命中 ${dashboardCached.toLocaleString()} Token`" :style="{background:`conic-gradient(#111 ${dashboardCacheRate}%,#e5e5ea 0)`}"><i></i><b>{{dashboardCacheRate}}%</b><em class="floating-chart-tooltip"><b>缓存命中</b><span>{{dashboardCached.toLocaleString()}} / {{dashboardInput.toLocaleString()}} Token</span></em></div></template>
     <template v-else-if="id==='costChart'"><div class="floating-module-head"><span>7 天消费金额</span><strong>¥{{floatingWeekCost.toFixed(2)}}</strong></div><div class="floating-chart-bars floating-interactive-chart" role="img" aria-label="7 天消费金额柱状图"><span v-for="bar in modelChartSeries" class="floating-chart-point" tabindex="0" :aria-label="`${bar.day}，人民币 ${bar.cost.toFixed(4)} 元`"><i :style="{height:bar.costHeight+'%'}"></i><em class="floating-chart-tooltip"><b>{{bar.day}}</b><span>¥{{bar.cost.toFixed(4)}}</span></em></span></div></template>
     <template v-else-if="id==='requestChart'"><div class="floating-module-head"><span>7 天 API 请求</span><strong>{{floatingTodayCalls}}</strong></div><div class="floating-chart-bars floating-interactive-chart" role="img" aria-label="7 天 API 请求柱状图"><span v-for="bar in modelChartSeries" class="floating-chart-point" tabindex="0" :aria-label="`${bar.day}，${bar.calls} 次请求`"><i :style="{height:bar.callsHeight+'%'}"></i><em class="floating-chart-tooltip"><b>{{bar.day}}</b><span>{{bar.calls}} 次</span></em></span></div></template>
     <template v-else-if="id==='tokenTrendChart'"><div class="floating-module-head"><span>7 天 Token 趋势</span><strong>{{floatingTokenTotal7d.toLocaleString()}}</strong></div><div class="floating-line-wrap floating-interactive-chart" role="img" aria-label="7 天 Token 趋势折线图"><svg class="floating-line-chart" viewBox="0 0 160 56" preserveAspectRatio="none"><polyline :points="floatingTokenPoints" fill="none" stroke="currentColor" stroke-width="2.5" vector-effect="non-scaling-stroke"/></svg><span v-for="point in floatingTokenPlot" class="floating-line-point floating-chart-point" tabindex="0" :style="{left:point.x+'%',top:point.y+'%'}" :aria-label="`${point.day}，${point.value.toLocaleString()} Token`"><i></i><em class="floating-chart-tooltip"><b>{{point.day}}</b><span>{{point.value.toLocaleString()}} Token</span></em></span></div></template>
-    <template v-else><div class="floating-module-head"><span>{{selectedDashboard==='__all__'?'今日调用总次数':selectedDashboard==='__codex__'?'Codex 今日 turn':'当前模型今日调用'}}</span><strong><AnimatedNumber :value="floatingTodayCalls" /></strong></div><small v-if="selectedDashboard==='__all__'">API 调用 {{todayCalls-todayCodexTurns}} 次 · Codex turn {{todayCodexTurns}} 次</small><small v-else-if="selectedDashboard==='__codex__'">本地日志 turn 数</small><small v-else>{{selectedDashboardDef?.provider}} · {{selectedDashboardDef?.model}}</small></template>
+    <template v-else><div class="floating-module-head"><span>{{selectedDashboard==='__all__'?'今日调用总次数':selectedDashboard==='__codex__'?'Codex 今日 turn':'当前模型今日调用'}}</span><strong><AnimatedNumber :value="floatingTodayCalls" /></strong></div><small v-if="selectedDashboard==='__all__'">API 调用 {{todayCalls-todayCodexTurns}} 次· Codex turn {{todayCodexTurns}} 次</small><small v-else-if="selectedDashboard==='__codex__'">本地日志 turn 数</small><small v-else>{{selectedDashboardDef?.provider}} · {{selectedDashboardDef?.model}}</small></template>
    </section>
   </TransitionGroup>
   <div v-if="!floatingCollapsed&&floatingCustomizing" class="floating-card-library"><span>添加模块</span><button v-for="id in disabledFloatingModules" :key="id" @click="toggleFloatingModuleValue(id,true)">＋ {{floatingModuleTitle(id)}}</button><small v-if="!disabledFloatingModules.length">所有模块都已添加</small></div>
@@ -1290,7 +1624,12 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
  <main v-if="floatingMode" class="floating-v3-host" :class="[`theme-${appTheme.id}`,`glass-quality-${glassQuality}`,{'theme-dark':appThemeDark}]" :style="appThemeStyle">
   <InteractionEffects />
   <FloatingWindowV3
-   :mode="floatingConfig.mode"
+   :mode="floatingRenderedMode"
+   :presentation="floatingRenderedPresentation"
+   :transitioning="floatingTransitioning"
+   :transition-stage="floatingTransitionStage"
+   :edge-side="floatingConfig.edgeHandleSide"
+   :edge-trigger="floatingConfig.edgeHandleTrigger"
    :rows="floatingVisibleViews"
    :selected-key="selectedDashboard"
     :expanded-keys="floatingConfig.expandedKeys"
@@ -1320,9 +1659,13 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
    @close="closeFloating"
    @toggle-always-on-top="toggleFloatingAlwaysOnTop"
     @set-interaction="setFloatingInteraction"
-    @reorder="reorderFloatingRows"
-    @toggle-pin="toggleFloatingPin"
-   />
+     @reorder="reorderFloatingRows"
+     @toggle-pin="toggleFloatingPin"
+     @collapse-handle="collapseFloatingToHandle"
+     @expand-handle="expandFloatingFromHandle"
+     @peek-handle="peekFloatingHandle"
+     @restore-handle="restoreFloatingHandle"
+    />
  </main>
  <main v-if="!floatingMode" class="shell" :class="[`mode-${globalMode}`,`theme-${appTheme.id}`,`glass-quality-${glassQuality}`,{'theme-dark':appThemeDark}]" :style="appThemeStyle">
  <InteractionEffects />
@@ -1330,6 +1673,7 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
  <SyncHealthPanel :open="syncHealthOpen" :items="syncHealthItems" :syncing="isSyncing||opencodeLocalSyncing" @close="syncHealthOpen=false" @refresh="sourceId=>sourceId?syncReliabilitySource(sourceId):syncData()" />
  <LiquidGlassEnvironment v-if="appTheme.material==='liquid'" :quality="glassQuality" :distortion="glassDistortion" :background-url="effectiveLiquidBackgroundImage" :video-path="liquidBackgroundVideoPath" />
   <EdgeScrollRail />
+  <ScrollFadeVeils />
   <div class="app-titlebar" data-liquid-surface="titlebar" data-tauri-drag-region @dblclick="toggleMainWindowMaximize">
    <div class="app-titlebar-brand" data-tauri-drag-region><img :src="tokenManagerLogo" alt=""><span data-tauri-drag-region>Token Manager</span></div>
    <div class="app-window-controls" aria-label="窗口控制">
@@ -1342,7 +1686,7 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
    <nav aria-label="主导航"><button v-for="item in navItems" :key="item.id" :class="{active:page===item.id}" :aria-current="page===item.id?'page':undefined" @click="page=item.id"><component :is="item.icon" class="nav-icon" aria-hidden="true" :size="18" :stroke-width="1.8" /><span>{{item.label}}</span></button></nav>
    <div class="sidebar-material-footer" data-liquid-surface>
     <div class="sidebar-material-status"><i aria-hidden="true"></i><span><b>{{appTheme.name}}</b><small>{{appTheme.material==='liquid'?'实时折射材质':'本地轻量模式'}}</small></span></div>
-    <div class="privacy">⌁ 所有数据仅保存在本机<br>密钥受 Windows 加密保护</div>
+    <div class="privacy">⌁所有数据仅保存在本机<br>密钥受 Windows 加密保护</div>
    </div>
   </aside>
    <section class="content">
@@ -1369,13 +1713,13 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
     <CommandCenter v-if="page==='command'" :today-tokens="todayTotalTokens" :today-calls="todayCalls" :today-cost="combinedUsage.filter(item=>localDayKey(new Date(item.at))===localDayKey(new Date(now))).reduce((sum,item)=>sum+item.cost,0)" :active-models="activeModelCount" :account-count="savedAccounts.length" :proxy-count="proxyEndpoints.length" :cc-connected="ccSwitch.local_routing" :codex-remaining="remaining7d" :week-cost="weekCost" :monthly-budget="monthlyBudget" :activities="commandActivities" @open-dashboard="page='dashboard'" @open-prompts="page='prompts'" @open-arena="page='arena'" @start-proxy="startAllProxies" />
     <PromptCenter v-if="page==='prompts'" />
 <ArenaCenter v-if="page==='arena'" ref="arenaCenter" />
-    <ReportCenter v-if="page==='reports'" :usage="usage" @export-all="exportBill()" @export-model="exportBill" />
+    <ReportCenter v-if="page==='reports'" :usage="usage" :codex-sessions="codexSessions" @export-all="exportBill()" @export-model="exportBill" />
     <SettingsCenter v-if="page==='settings'||page==='floating'" :initial-section="page==='floating'?'floating':'general'" :single-section="page==='floating'"
-     :floating-enabled="floatingEnabled" :floating-items="floatingModuleCatalog" :floating-order="floatingConfig.order" :floating-selected="floatingConfig.enabled" :floating-layout="floatingConfig.layout" :floating-mode="floatingConfig.mode" :floating-interaction="floatingConfig.interaction" :floating-always-on-top="floatingConfig.alwaysOnTop" :floating-preview-rows="floatingDashboardViews" :floating-selected-key="selectedDashboard" :floating-visible-keys="floatingConfig.visibleKeys" :floating-pinned-keys="floatingConfig.pinnedKeys" :floating-allow-multiple-expanded="floatingConfig.allowMultipleExpanded" :floating-sizes="floatingConfig.sizes" :floating-metric="floatingChartMetric" :floating-render-status="floatingRenderStatus" :token-manager-logo="tokenManagerLogo" :codex-logo="codexOfficialLogo" :mini-mode="floatingConfig.mode==='capsule'" :mini-modules="floatingConfig.mini"
-     :budget5h="budget5h" :budget7d="budget7d" :budget-status="budgetSaved" :proxy-upstream="proxyUpstream" :proxy-port="proxyPort" :proxy-status="proxyStatus" :backup-password="backupPassword" :backup-status="backupStatus" :account-count="savedAccounts.length" :dashboard-count="modelDashboards.length" :proxy-endpoint-count="proxyEndpoints.length" :cc-switch-installed="ccSwitch.installed" :cc-switch-running="ccSwitch.running" :cc-switch-routing="ccSwitch.local_routing" :cc-switch-detail="ccSwitch.detail" :cloud-session="cloudSession" :cloud-status="cloudStatus" :cloud-transfer-link="cloudTransferLink"
-     @toggle-floating="toggleFloating" @toggle-floating-item="toggleFloatingModuleValue" @reorder-floating-item="(source,target)=>moveFloatingModuleTo(source as FloatingModuleId,target as FloatingModuleId)" @set-floating-layout="setFloatingLayout" @set-floating-mode="setFloatingMode" @set-floating-visible="setFloatingVisible" @reorder-floating-row="reorderFloatingRows" @toggle-floating-pin="toggleFloatingPin" @set-floating-multiple-expanded="checked=>{floatingConfig.allowMultipleExpanded=checked;persistFloatingConfig()}" @set-floating-size="setFloatingSize" @set-floating-interaction="setFloatingInteraction" @toggle-floating-always-on-top="toggleFloatingAlwaysOnTop" @set-mini-mode="setMiniModeValue" @set-mini-module="updateMiniModuleValue" @save-budget="saveBudgetFromSettings" @start-proxy="startProxyFromSettings" @export-backup="exportBackupFromSettings" @import-backup="importBackupFromSettings" @cloud-request-code="requestCloudCode" @cloud-password-login="cloudPasswordLogin" @cloud-password-register="cloudPasswordRegister" @cloud-code-login="cloudCodeLogin" @cloud-logout="logoutCloud" @cloud-create-transfer="createCloudTransfer" @cloud-import-transfer="importCloudTransfer" @open-accounts="page='accounts'" @start-all-proxies="startAllProxies" @reopen-onboarding="onboardingOpen=true" />
+     :floating-enabled="floatingEnabled" :floating-items="floatingModuleCatalog" :floating-order="floatingConfig.order" :floating-selected="floatingConfig.enabled" :floating-layout="floatingConfig.layout" :floating-mode="floatingConfig.mode" :floating-presentation="floatingConfig.presentation" :floating-edge-handle-enabled="floatingConfig.edgeHandleEnabled" :floating-edge-trigger="floatingConfig.edgeHandleTrigger" :floating-animate-mode-changes="floatingConfig.animateModeChanges" :floating-interaction="floatingConfig.interaction" :floating-always-on-top="floatingConfig.alwaysOnTop" :floating-preview-rows="floatingDashboardViews" :floating-selected-key="selectedDashboard" :floating-visible-keys="floatingConfig.visibleKeys" :floating-pinned-keys="floatingConfig.pinnedKeys" :floating-allow-multiple-expanded="floatingConfig.allowMultipleExpanded" :floating-sizes="floatingConfig.sizes" :floating-metric="floatingChartMetric" :floating-render-status="floatingRenderStatus" :token-manager-logo="tokenManagerLogo" :codex-logo="codexOfficialLogo" :mini-mode="floatingConfig.mode==='capsule'" :mini-modules="floatingConfig.mini" :floating-hotkey="floatingHotkey" :floating-hotkey-status="floatingHotkeyStatus"
+     :budget5h="budget5h" :budget7d="budget7d" :budget-status="budgetSaved" :proxy-upstream="proxyUpstream" :proxy-port="proxyPort" :proxy-status="proxyStatus" :backup-password="backupPassword" :backup-status="backupStatus" :local-backup-status="localBackupStatus" :account-count="savedAccounts.length" :dashboard-count="modelDashboards.length" :proxy-endpoint-count="proxyEndpoints.length" :cc-switch-installed="ccSwitch.installed" :cc-switch-running="ccSwitch.running" :cc-switch-routing="ccSwitch.local_routing" :cc-switch-detail="ccSwitch.detail" :cloud-session="cloudSession" :cloud-status="cloudStatus" :cloud-transfer-link="cloudTransferLink"
+     @toggle-floating="toggleFloating" @toggle-floating-item="toggleFloatingModuleValue" @reorder-floating-item="(source,target)=>moveFloatingModuleTo(source as FloatingModuleId,target as FloatingModuleId)" @set-floating-layout="setFloatingLayout" @set-floating-mode="setFloatingMode" @set-floating-visible="setFloatingVisible" @reorder-floating-row="reorderFloatingRows" @toggle-floating-pin="toggleFloatingPin" @set-floating-multiple-expanded="checked=>{floatingConfig.allowMultipleExpanded=checked;persistFloatingConfig()}" @set-floating-size="setFloatingSize" @set-floating-edge-handle="checked=>{floatingConfig.edgeHandleEnabled=checked;persistFloatingConfig()}" @set-floating-edge-trigger="trigger=>{floatingConfig.edgeHandleTrigger=trigger;persistFloatingConfig()}" @set-floating-animation="checked=>{floatingConfig.animateModeChanges=checked;persistFloatingConfig()}" @select-floating-handle="selectFloatingHandleFromSettings" @collapse-floating-handle="collapseFloatingToHandle" @set-floating-interaction="setFloatingInteraction" @toggle-floating-always-on-top="toggleFloatingAlwaysOnTop" @set-floating-hotkey="setFloatingHotkeyFromSettings" @set-mini-mode="setMiniModeValue" @set-mini-module="updateMiniModuleValue" @save-budget="saveBudgetFromSettings" @start-proxy="startProxyFromSettings" @export-backup="exportBackupFromSettings" @import-backup="importBackupFromSettings" @export-local-backup="exportLocalBackup" @import-local-backup="importLocalBackup" @cloud-request-code="requestCloudCode" @cloud-password-login="cloudPasswordLogin" @cloud-password-register="cloudPasswordRegister" @cloud-code-login="cloudCodeLogin" @cloud-logout="logoutCloud" @cloud-create-transfer="createCloudTransfer" @cloud-import-transfer="importCloudTransfer" @open-accounts="page='accounts'" @start-all-proxies="startAllProxies" @reopen-onboarding="onboardingOpen=true" />
     <template v-if="page==='dashboard'">
-    <section class="dashboard-switcher" aria-label="模型仪表盘切换" @wheel="scrollDashboardSwitcher"><button :class="{active:selectedDashboard==='__all__'}" :aria-pressed="selectedDashboard==='__all__'" @click="selectDashboard('__all__')">全部模型</button><button class="codex-dashboard-tab" :class="{active:selectedDashboard==='__codex__'}" :aria-pressed="selectedDashboard==='__codex__'" @click="selectDashboard('__codex__')">Codex 专属</button><button class="claude-dashboard-tab" :class="{active:selectedDashboard==='__claude__'}" :aria-pressed="selectedDashboard==='__claude__'" @click="selectDashboard('__claude__')">Claude Code 专属</button><div v-for="item in modelDashboards" :key="item.key" class="dashboard-tab" :class="{active:selectedDashboard===item.key}"><button class="dashboard-tab-label" :aria-pressed="selectedDashboard===item.key" @click="selectDashboard(item.key)">{{item.label}}</button><button class="dashboard-remove" type="button" :title="`删除 ${item.label} 仪表盘`" :aria-label="`删除 ${item.label} 仪表盘`" @click.stop="removeDashboard(item.key)"><span aria-hidden="true">×</span></button></div><button class="add-dashboard" @click="openDashboardPicker">＋ 添加仪表盘</button></section>
+    <section class="dashboard-switcher" aria-label="模型仪表盘切换" @wheel="scrollDashboardSwitcher"><button :class="{active:selectedDashboard==='__all__'}" :aria-pressed="selectedDashboard==='__all__'" @click="selectDashboard('__all__')">全部模型</button><button class="codex-dashboard-tab" :class="{active:selectedDashboard==='__codex__'}" :aria-pressed="selectedDashboard==='__codex__'" @click="selectDashboard('__codex__')">Codex 专属</button><button class="claude-dashboard-tab" :class="{active:selectedDashboard==='__claude__'}" :aria-pressed="selectedDashboard==='__claude__'" @click="selectDashboard('__claude__')">Claude Code 专属</button><div v-for="item in modelDashboards" :key="item.key" class="dashboard-tab" :class="{active:selectedDashboard===item.key}"><button class="dashboard-tab-label" :aria-pressed="selectedDashboard===item.key" @click="selectDashboard(item.key)">{{item.label}}</button><button class="dashboard-remove" type="button" :title="`删除 ${item.label} 仪表盘`" :aria-label="`删除 ${item.label} 仪表盘`" @click.stop="removeDashboard(item.key)"><span aria-hidden="true">×</span></button></div><button class="add-dashboard" @click="openDashboardPicker">＋添加仪表盘</button></section>
  <section class="dashboard-context-heading" data-liquid-ignore><div><img v-if="selectedDashboard==='__codex__'" class="codex-official-mark" :src="codexOfficialLogo" alt="Codex 官方标志" /><ProviderMark v-else-if="isClaudeDashboard" name="Anthropic" /><ProviderMark v-else-if="isApiDashboard" :name="selectedDashboardDef?.provider||''" /><div><SupplementalHelp help-id="dashboard-heading-detail" detail="图表优先展示；下方再呈现 Token、请求、缓存、余额和来源说明。"><h2>{{dashboardTitle}}</h2></SupplementalHelp></div></div><span>{{selectedDashboard==='__codex__'?codexSeries.length:dashboardUsage.length}} 条真实记录</span></section>
      <DataSourceBadge class="dashboard-source-badge" :kind="dashboardSourceMeta.kind" :accuracy="dashboardSourceMeta.accuracy" :collected-at="dashboardSourceMeta.collectedAt" />
      <section v-if="!(selectedDashboard==='__codex__'?codexSeries.length:selectedDashboard==='__all__'?combinedUsage.length:dashboardUsage.length)" class="dashboard-zero-state"><b>还没有真实用量数据</b><p>添加账户、开启本地代理，或连接 Codex、Claude Code、OpenCode 本地数据后，这里才会生成真实图表。</p><button @click="page='accounts'">连接数据源</button></section>
@@ -1384,6 +1728,12 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
     <section v-if="selectedDashboard==='__all__'" class="all-dashboard">
      <div class="all-summary"><div><span>今日全平台总 Token</span><strong><AnimatedNumber :value="todayTotalTokens" /></strong><p>Codex 本地日志与所有 API 代理调用的统一总览</p></div><dl><div><dt>API 请求</dt><dd><AnimatedNumber :value="dashboardToday.length" /></dd></div><div><dt>活跃模型</dt><dd><AnimatedNumber :value="activeModelCount" /></dd></div><div><dt>今日成本</dt><dd><AnimatedNumber :value="dashboardCost" :decimals="2" prefix="¥" /></dd></div><div><dt>已连接账户</dt><dd><AnimatedNumber :value="savedAccounts.length" /></dd></div></dl></div>
       <div class="all-overview-grid">
+       <section class="monthly-estimate overview-block">
+        <div class="section-title"><div><h2>本月预算预估</h2><span>本地用量推算 · 非官方账单</span></div><strong :class="monthlyEstimateLevel">{{monthlyEstimatePercent}}%</strong></div>
+        <div class="monthly-estimate-meta"><span>本月已用 <b>¥{{monthlyEstimate?monthlyEstimate.month_cost.toFixed(2):'0.00'}}</b></span><span>月底预计 <b>¥{{monthlyEstimate?monthlyEstimate.projected_month_cost.toFixed(2):'—'}}</b></span><span>月度预算 <b>¥{{monthlyBudget}}</b></span><span>近 30 天<b>¥{{monthlyEstimate?monthlyEstimate.last30d_cost.toFixed(2):'0.00'}}</b></span></div>
+        <div class="track"><span :style="{width:monthlyEstimatePercent+'%',background:monthlyEstimateLevel==='critical'?'#FF3B30':monthlyEstimateLevel==='warning'?'#E8B04B':'#34C759'}"></span></div>
+        <small>按本月已过 {{monthlyEstimate?monthlyEstimate.days_elapsed:0}} / {{monthlyEstimate?monthlyEstimate.days_in_month:0}} 天的真实用量线性推算，仅供参考。</small>
+       </section>
        <section class="today-models overview-block">
         <div class="section-title"><div><h2>今日使用模型</h2><span>彩色品牌标志 · 按 Token 从高到低</span></div><strong>{{todayUsedProviders.length}} 个活跃</strong></div>
         <div v-if="todayUsedProviders.length" class="today-logo-list">
@@ -1414,7 +1764,7 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
      </div>
     </section>
      <section v-if="selectedDashboard==='__all__'" class="card all-token-history legacy-chart-section">
-     <div class="token-chart-header"><div><h2>Token 消耗记录</h2><p>输入与输出 Token 合计；缓存命中属于输入的一部分，不重复计算。</p></div><div class="token-range" aria-label="Token 图表时间范围"><button :class="{active:tokenChartRange===7}" :aria-pressed="tokenChartRange===7" @click="setTokenChartRange(7)">7 天</button><button :class="{active:tokenChartRange===30}" :aria-pressed="tokenChartRange===30" @click="setTokenChartRange(30)">30 天</button></div></div>
+     <div class="token-chart-header"><div><h2>Token 消耗记录</h2><p>输入与输出 Token 合计；缓存命中属于输入的一部分，不重复计算。</p></div><div class="token-range" aria-label="Token 图表时间范围"><button :class="{active:tokenChartRange===7}" :aria-pressed="tokenChartRange===7" @click="setTokenChartRange(7)">7 复</button><button :class="{active:tokenChartRange===30}" :aria-pressed="tokenChartRange===30" @click="setTokenChartRange(30)">30 复</button></div></div>
      <div class="token-chart-summary"><span><small>周期累计</small><b>{{allTokenChart.total.toLocaleString()}}</b></span><span><small>日均 Token</small><b>{{tokenChartDailyAverage.toLocaleString()}}</b></span><span><small>峰值日期</small><b>{{allTokenChart.peak?.day||'—'}}</b></span><span><small>活跃 AI</small><b>{{allTokenChart.activeProviders}}</b></span></div>
      <div v-if="allTokenChart.total" class="stacked-token-chart" :class="{'is-30-days':tokenChartRange===30}">
       <div v-for="bar in allTokenChart.rows" :key="bar.key" class="token-day" tabindex="0" :aria-label="`${bar.day}，总计 ${bar.total.toLocaleString()} Token`">
@@ -1423,7 +1773,7 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
        <small>{{bar.label||' '}}</small>
       </div>
      </div>
-      <div v-else class="token-chart-empty"><b>还没有可绘制的真实 Token 记录</b><span>开启 API 实时监控或使用 Codex 后，数据会自动写入并在这里按天累计。</span><button v-if="!proxyEndpoints.length" @click="startAllProxies()">一键开启 API 实时监控</button></div>
+      <div v-else class="token-chart-empty"><b>还没有可绘制的真实Token 记录</b><span>开启API 实时监控或使用 Codex 后，数据会自动写入并在这里按天累计。</span><button v-if="!proxyEndpoints.length" @click="startAllProxies()">一键开启 API 实时监控</button></div>
      <div v-if="allTokenChart.legend.length" class="token-legend" aria-label="AI 颜色图例"><span v-for="item in allTokenChart.legend" :key="item.provider"><i :style="{background:item.color}"></i><ProviderMark :name="item.provider==='Codex'?'OpenAI':item.provider"/><b>{{item.provider}}</b><small>{{item.tokens.toLocaleString()}}</small></span></div>
     </section>
     <section v-else-if="selectedDashboard==='__codex__'" class="codex-dashboard">
@@ -1470,8 +1820,14 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
    </template>
     <template v-else-if="page==='accounts'">
      <div class="account-intro"><div><h2>接入你的模型账户</h2><p class="intro">密钥永久保存为 Windows DPAPI 密文；应用重启后自动恢复账户和模型选项。</p></div><button v-if="savedAccounts.length" class="danger-outline" @click="clearSavedAccounts">清空全部密钥</button></div>
+     <div v-if="balanceCapabilities.length" class="balance-capability-note" :class="{ 'is-collapsed': !balanceCapabilitiesExpanded }">
+      <button type="button" class="balance-capability-toggle" :aria-expanded="balanceCapabilitiesExpanded" aria-controls="balance-capability-body" @click="toggleBalanceCapabilities">
+        <span class="balance-capability-copy"><b>官方余额接口说明</b><span>只有标注“官方接口”的平台能显示真实官方余额；其他数据仅为本地估算或用量观察。</span></span><span class="balance-capability-chevron" aria-hidden="true"><ChevronDown :size="14" :stroke-width="2" /></span>
+      </button>
+      <div id="balance-capability-body" v-show="balanceCapabilitiesExpanded" class="balance-capability-grid"><span v-for="cap in balanceCapabilities" :key="cap.provider" :class="{official:cap.official_api}"><i aria-hidden="true"></i><b>{{cap.provider}}</b><small>{{cap.detail}}</small></span></div>
+     </div>
      <section class="local-agent-center card" aria-labelledby="local-agent-title">
-      <div class="local-agent-heading"><div><span class="eyebrow">无需 API Key</span><h2 id="local-agent-title">本地 Agent 自动监控</h2><SupplementalHelp summary="仅读取本地用量元数据" detail="读取 Token、模型、请求、缓存、时间和会话标识；不读取提示词、回复正文、代码、Cookie 或认证内容。自动路径会在每台电脑按当前 Windows 用户重新解析。" /></div><button class="outline" :disabled="modelsLoading" @click="refreshSyncHealth">{{modelsLoading?'检测中…':`重新检测 ${localAgents.length || 27} 款 Agent`}}</button></div>
+      <div class="local-agent-heading"><div><span class="eyebrow">无需 API Key</span><h2 id="local-agent-title">本地 Agent 自动监控</h2><SupplementalHelp summary="仅读取本地用量元数据" detail="读取 Token、模型、请求、缓存、时间和会话标识；不读取提示词、回复正文、代码、Cookie 或认证内容。自动路径会在每台电脑按当前 Windows 用户重新解析。" /></div><button class="outline" :disabled="modelsLoading" @click="refreshSyncHealth">{{modelsLoading?'检测中…':`重新检测 ${localAgents.length || 27} 次 Agent`}}</button></div>
       <div class="local-agent-grid">
        <article v-for="agent in localAgents" :key="agent.id" class="local-agent-card" :class="{detected:agent.detected,enabled:agentSourceFor(agent)?.enabled}">
         <div class="local-agent-identity"><ProviderMark :name="agent.provider" /><span><b>{{agent.name}}</b><small>{{agent.collector_kind.toUpperCase()}} · {{agent.support_state==='detected_only'?'仅检测安装':agent.support_state==='experimental'?'实验适配':agent.schema_version?'结构已识别':'等待识别'}}</small></span><i :title="agent.detected?'已发现本机数据':'未自动发现'">{{agent.detected?'已发现':'未发现'}}</i></div>
@@ -1487,22 +1843,22 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
      <div class="providers"><article class="card provider" v-for="p in accounts">
       <div class="provider-body"><div><div class="provider-head"><ProviderMark :name="p.name" /><h2>{{p.name==='OpenCode Go'?'OpenCode Go / Zen':p.name}}</h2></div><p>{{p.description}}</p><p v-if="p.name==='OpenCode Go'" class="opencode-go-account-note">Go 订阅与 Zen 网关分开配置；本地 Agent 统一显示为 OpenCode CLI</p><span class="badge" :class="p.source">{{p.source}}</span></div>
        <div v-if="savedAccounts.some(a=>a.provider===p.name)" class="saved-accounts"><div v-for="account in savedAccounts.filter(a=>a.provider===p.name)"><span><b>{{account.name}}</b><small>{{account.base_url}}</small></span><button class="icon-action" @click="openConfig(p,account)">编辑</button><button class="icon-action danger" @click="deleteSavedAccount(account.id)">删除</button></div></div>
-       <div v-if="p.name==='OpenCode Go'" class="opencode-local-source"><div><b>本地用量记录</b><small>{{opencodeLocalStatus}}</small><code v-if="opencodeLocalPath">{{opencodeLocalPath}}</code></div><label class="opencode-source-mode">监测方式<select v-model="opencodeLocalMode" :disabled="opencodeLocalSyncing" @change="changeOpenCodeLocalMode"><option value="auto">自动（优先 SQLite）</option><option value="sqlite">仅 SQLite</option><option value="json">仅 JSON / JSONL</option></select></label><button class="outline" :disabled="opencodeLocalSyncing" @click="chooseOpenCodeLocalSource">{{opencodeLocalSyncing?'正在读取…':'选择目录并同步'}}</button></div>
+      <div v-if="p.name==='OpenCode Go'" class="opencode-local-source"><div><b>本地用量记录</b><small>{{opencodeLocalStatus}}</small><code v-if="opencodeLocalPath">{{opencodeLocalPath}}</code></div><label class="opencode-source-mode">监测方式<select v-model="opencodeLocalMode" :disabled="opencodeLocalSyncing" @change="changeOpenCodeLocalMode"><option value="auto">自动（优先 SQLite）</option><option value="sqlite">SQLite</option><option value="json">JSON / JSONL</option></select></label><button class="outline" :disabled="opencodeLocalSyncing" @click="chooseOpenCodeLocalSource">{{opencodeLocalSyncing?'正在读取…':'选择目录并同步'}}</button></div>
       </div>
-      <div class="account-actions"><button class="outline" @click="openProviderPortal(p)">官网 ↗</button><button @click="openConfig(p)">＋ {{p.name==='OpenCode Go'?'添加 Go / Zen API Key':'添加账户'}}</button></div>
+      <div class="account-actions"><button class="outline" @click="openProviderPortal(p)">官网 ↗</button><button @click="openConfig(p)">{{p.name==='OpenCode Go'?'添加 Go / Zen API Key':'添加账户'}}</button></div>
      </article></div>
     </template>
    </div>
   </section>
-  <Transition name="modal-fade"><div v-if="dashboardModal" class="modal-backdrop" @click.self="dashboardModal=false"><section class="config-modal compact dashboard-picker"><button class="close" @click="dashboardModal=false">×</button><span class="eyebrow">添加仪表盘</span><h2>选择 API 模型或本地 Agent</h2><div class="dashboard-picker-tabs" role="tablist"><button :class="{active:dashboardPickerTab==='api'}" role="tab" :aria-selected="dashboardPickerTab==='api'" @click="dashboardPickerTab='api';newDashboardKey=''">API 账户</button><button :class="{active:dashboardPickerTab==='agent'}" role="tab" :aria-selected="dashboardPickerTab==='agent'" @click="dashboardPickerTab='agent';newDashboardKey=''">本地 Agent</button></div><p v-if="modelsLoading">正在读取账户模型并检测本地 Agent…</p><template v-else-if="dashboardPickerTab==='api'"><p>{{availableModels.length?'已优先读取账户实际模型；不支持模型发现的平台显示内置目录。':'请先在“账户与模型”中添加一个 API 账户。'}}</p><select v-model="newDashboardKey" :disabled="!availableModels.length"><option value="">选择账户与模型</option><option v-for="item in availableModels" :key="item.key" :value="item.key">{{item.label}}</option></select></template><template v-else><p>{{availableAgentDashboards.length?'可添加整个 Agent 总览，也可添加已发现的单个模型。':'尚未检测到本地 Agent，请先到“账户与模型”选择数据路径。'}}</p><select v-model="newDashboardKey" :disabled="!availableAgentDashboards.length"><option value="">选择本地 Agent 或模型</option><option v-for="item in availableAgentDashboards" :key="item.key" :value="item.key">{{item.label}}</option></select></template><button :disabled="!newDashboardKey" @click="addDashboard">添加仪表盘</button></section></div></Transition>
+  <Transition name="modal-fade"><div v-if="dashboardModal" class="modal-backdrop" @click.self="dashboardModal=false"><section class="config-modal compact dashboard-picker"><button class="close" @click="dashboardModal=false">×</button><span class="eyebrow">添加仪表盘</span><h2>选择 API 模型或本地 Agent</h2><div class="dashboard-picker-tabs" role="tablist"><button :class="{active:dashboardPickerTab==='api'}" role="tab" :aria-selected="dashboardPickerTab==='api'" @click="dashboardPickerTab='api';newDashboardKey=''">API 账户</button><button :class="{active:dashboardPickerTab==='agent'}" role="tab" :aria-selected="dashboardPickerTab==='agent'" @click="dashboardPickerTab='agent';newDashboardKey=''">本地 Agent</button></div><p v-if="modelsLoading">正在读取账户模型并检测本地 Agent…</p><template v-else-if="dashboardPickerTab==='api'"><p>{{availableModels.length?'已优先读取账户实际模型；不支持模型发现的平台显示内置目录。':'请先在“账户与模型”中添加一个 API 账户。'}}</p><DashboardSourcePicker v-model="newDashboardKey" :options="availableModels" placeholder="选择账户与模型" empty-text="没有匹配的账户或模型" :disabled="!availableModels.length" /></template><template v-else><p>{{availableAgentDashboards.length?'可添加整个 Agent 总览，也可添加已发现的单个模型。':'尚未检测到本地 Agent，请先到“账户与模型”选择数据路径。'}}</p><DashboardSourcePicker v-model="newDashboardKey" :options="availableAgentDashboards" placeholder="选择本地 Agent 或模型" empty-text="没有匹配的本地 Agent" :disabled="!availableAgentDashboards.length" /></template><button :disabled="!newDashboardKey" @click="addDashboard">添加仪表盘</button></section></div></Transition>
   <Transition name="modal-fade"><div v-if="configuring" class="modal-backdrop" @click.self="configuring=null"><section class="config-modal"><button class="close" @click="configuring=null">×</button><div class="provider-head"><ProviderMark :name="configuring.name" /><div><span class="eyebrow">安全配置</span><h2>{{configuring.name==='OpenCode Go'?'OpenCode Go / Zen':configuring.name}}</h2></div></div><p>API Key 将使用当前 Windows 用户的 DPAPI 加密保存。</p><div v-if="configuring.name==='OpenCode Go'" class="opencode-go-config-note"><b>选择服务类型</b><div class="opencode-variant"><button :class="{active:configOpenCodeVariant==='go'}" @click="setOpenCodeVariant('go')">Go 订阅</button><button :class="{active:configOpenCodeVariant==='zen'}" @click="setOpenCodeVariant('zen')">Zen 网关</button></div><span>{{configOpenCodeVariant==='go'?'Go 使用 /zen/go/v1，并显示 Go 套餐语义。':'Zen 使用 /zen/v1，只展示代理实测用量，不套用 Go 额度。'}}</span></div><label>账户名称<input v-model.trim="configName"></label><label>Base URL<input v-model.trim="configUrl" placeholder="https://api.example.com"></label><label>API Key<input v-model="configKey" type="password" :placeholder="editingAccountId?'留空则继续使用已加密保存的密钥':'粘贴官网创建的密钥'"></label><button @click="saveConfig">{{configuring.name==='OpenCode Go'?`保存并验证 ${configOpenCodeVariant==='go'?'Go':'Zen'} API Key`:'加密保存账户'}}</button><small>{{configStatus}}</small></section></div></Transition>
  </main>
 </template>
 
 <style scoped>
-.local-agent-center{display:grid;gap:18px;margin-bottom:18px}.local-agent-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}.local-agent-heading h2{margin:4px 0 6px}.local-agent-heading p{max-width:760px;margin:0;color:var(--tm-muted);font-size:12px;line-height:1.6}.local-agent-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.local-agent-card{display:grid;align-content:start;gap:11px;min-width:0;padding:16px;border:1px solid var(--tm-line);border-radius:16px;background:color-mix(in srgb,var(--tm-bg) 84%,transparent)}.local-agent-card.enabled{border-color:color-mix(in srgb,var(--tm-ink) 28%,var(--tm-line))}.local-agent-identity{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px}.local-agent-identity>span{display:grid;gap:3px;min-width:0}.local-agent-identity b{font-size:12px}.local-agent-identity small{overflow:hidden;color:var(--tm-muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.local-agent-identity>i{padding:5px 8px;border-radius:999px;background:var(--tm-surface);color:var(--tm-muted);font-size:8px;font-style:normal}.local-agent-card.detected .local-agent-identity>i{background:color-mix(in srgb,#34c759 12%,var(--tm-bg));color:color-mix(in srgb,#34c759 72%,var(--tm-ink))}.local-agent-card>p{min-height:34px;margin:0;color:var(--tm-muted);font-size:10px;line-height:1.55}.agent-capabilities{display:flex;flex-wrap:wrap;gap:5px}.agent-capabilities span{padding:5px 7px;border:1px solid var(--tm-line);border-radius:999px;color:var(--tm-muted);font-size:8px}.local-agent-card>code{overflow:hidden;padding:9px 10px;border-radius:10px;background:var(--tm-surface);color:var(--tm-ink);font:9px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}.agent-action-status{min-height:28px;color:var(--tm-muted);font-size:9px;line-height:1.5}.agent-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:auto}.agent-actions button{min-width:0}.dashboard-picker-tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:5px;border-radius:13px;background:var(--tm-surface)}.dashboard-picker-tabs button{border:0!important;background:transparent!important;color:var(--tm-muted)!important}.dashboard-picker-tabs button.active{background:var(--tm-bg)!important;color:var(--tm-ink)!important;box-shadow:0 1px 4px rgba(0,0,0,.07)}
+.local-agent-center{display:grid;gap:18px;margin-bottom:18px}.local-agent-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}.local-agent-heading h2{margin:4px 0 6px}.local-agent-heading p{max-width:760px;margin:0;color:var(--tm-muted);font-size:12px;line-height:1.6}.local-agent-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.local-agent-card{display:grid;align-content:start;gap:11px;min-width:0;padding:16px;border:1px solid var(--tm-line);border-radius:16px;background:color-mix(in srgb,var(--tm-bg) 84%,transparent)}.local-agent-card.enabled{border-color:color-mix(in srgb,var(--tm-ink) 28%,var(--tm-line))}.local-agent-identity{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px}.local-agent-identity>span{display:grid;gap:3px;min-width:0}.local-agent-identity b{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.local-agent-identity small{overflow:hidden;color:var(--tm-muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}.local-agent-identity>i{padding:5px 8px;border-radius:999px;background:var(--tm-surface);color:var(--tm-muted);font-size:8px;font-style:normal}.local-agent-card.detected .local-agent-identity>i{background:color-mix(in srgb,#34c759 12%,var(--tm-bg));color:color-mix(in srgb,#34c759 72%,var(--tm-ink))}.local-agent-card>p{min-height:34px;margin:0;color:var(--tm-muted);font-size:10px;line-height:1.55}.agent-capabilities{display:flex;flex-wrap:wrap;gap:5px}.agent-capabilities span{padding:5px 7px;border:1px solid var(--tm-line);border-radius:999px;color:var(--tm-muted);font-size:8px}.local-agent-card>code{overflow:hidden;padding:9px 10px;border-radius:10px;background:var(--tm-surface);color:var(--tm-ink);font:9px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}.agent-action-status{min-height:28px;color:var(--tm-muted);font-size:9px;line-height:1.5}.agent-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:auto}.agent-actions button{min-width:0}.dashboard-picker-tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:5px;border-radius:13px;background:var(--tm-surface)}.dashboard-picker-tabs button{border:0!important;background:transparent!important;color:var(--tm-muted)!important}.dashboard-picker-tabs button.active{background:var(--tm-bg)!important;color:var(--tm-ink)!important;box-shadow:0 1px 4px rgba(0,0,0,.07)}
 .agent-actions.triple{grid-template-columns:repeat(3,minmax(0,1fr))}.agent-actions button{padding-inline:8px}
-.agent-actual-path{min-width:0}.agent-actual-path summary{cursor:pointer;color:var(--tm-muted);font-size:9px}.agent-actual-path code{display:block;max-width:100%;margin-top:7px;overflow:hidden;padding:8px 9px;border-radius:9px;background:var(--tm-surface);font:8px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}.cc-conflict-alert{display:flex;grid-column:1/-1;align-items:center;gap:12px;padding:11px 13px;border:1px solid color-mix(in srgb,#ff9500 34%,var(--tm-line));border-radius:13px;background:color-mix(in srgb,#ff9500 7%,var(--tm-bg));color:var(--tm-ink)}.cc-conflict-alert span{display:grid;flex:1;gap:3px}.cc-conflict-alert small,.cc-conflict-alert em{color:var(--tm-muted);font-size:9px;font-style:normal}.cc-conflict-alert button{padding:8px 11px;border:0;border-radius:9px;background:var(--tm-ink);color:var(--tm-on-ink);font:inherit;font-size:9px}.opencode-variant{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:4px;border-radius:11px;background:var(--tm-bg)}.opencode-variant button{padding:8px;border:0;border-radius:8px;background:transparent;color:var(--tm-muted)}.opencode-variant button.active{background:var(--tm-ink);color:var(--tm-on-ink)}
+.agent-actual-path{min-width:0}.agent-actual-path summary{cursor:pointer;color:var(--tm-muted);font-size:9px}.agent-actual-path code{display:block;max-width:100%;margin-top:7px;overflow:hidden;padding:8px 9px;border-radius:9px;background:var(--tm-surface);font:8px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;text-overflow:ellipsis;white-space:nowrap}.cc-conflict-alert{display:flex;grid-column:1/-1;align-items:center;gap:12px;padding:11px 13px;border:1px solid color-mix(in srgb,#E8B04B 34%,var(--tm-line));border-radius:13px;background:color-mix(in srgb,#E8B04B 7%,var(--tm-bg));color:var(--tm-ink)}.cc-conflict-alert span{display:grid;flex:1;gap:3px}.cc-conflict-alert small,.cc-conflict-alert em{color:var(--tm-muted);font-size:9px;font-style:normal}.cc-conflict-alert button{padding:8px 11px;border:0;border-radius:9px;background:var(--tm-ink);color:var(--tm-on-ink);font:inherit;font-size:9px}.opencode-variant{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:4px;border-radius:11px;background:var(--tm-bg)}.opencode-variant button{padding:8px;border:0;border-radius:8px;background:transparent;color:var(--tm-muted)}.opencode-variant button.active{background:var(--tm-ink);color:var(--tm-on-ink)}
 @media(max-width:1180px){.local-agent-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.local-agent-grid{grid-template-columns:1fr}.local-agent-heading{flex-direction:column}.local-agent-heading>button{width:100%}}
 .legacy-chart-section,.all-cost-analytics,.report,.settings,.beginner-guide,.backup-settings{display:none}
 .opencode-go-monitor{display:grid;gap:14px;margin-bottom:18px}.opencode-go-heading{display:flex;align-items:center;justify-content:space-between;gap:18px}.opencode-go-heading h2{margin:3px 0}.opencode-go-heading p{margin:0;color:var(--tm-muted)}.opencode-go-quota-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.opencode-go-quota-card{display:grid;gap:12px;min-width:0}.opencode-go-quota-card>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--tm-muted)}.opencode-go-quota-card>div:first-child b{color:var(--tm-ink);font-size:12px}.opencode-go-quota-card>strong{font-size:26px;letter-spacing:-.04em}.opencode-go-quota-card>strong small{color:var(--tm-muted);font-size:13px;font-weight:500}.opencode-go-quota-track{height:9px;overflow:hidden;border-radius:999px;background:var(--tm-surface)}.opencode-go-quota-track i{display:block;height:100%;min-width:2px;border-radius:inherit;background:var(--tm-ink);transition:width .3s var(--apple-ease-out,ease-out)}.opencode-go-quota-card>small,.opencode-go-source{color:var(--tm-muted)}.opencode-go-source{margin:0 4px;font-size:12px;line-height:1.65}.opencode-go-account-note{margin-top:8px!important;color:var(--tm-ink)!important;font-size:12px;font-weight:650}.opencode-go-config-note{display:grid;gap:4px;margin:4px 0 2px;padding:12px 14px;border:1px solid var(--tm-line);border-radius:12px;background:var(--tm-surface);font-size:12px}.opencode-go-config-note span{color:var(--tm-muted);line-height:1.55}.opencode-go-config-note code{font-family:inherit;color:var(--tm-ink)}
@@ -1532,6 +1888,7 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
 .usage-bars{height:178px;display:flex;align-items:flex-end;gap:14px;padding:18px 10px 22px;border-bottom:1px solid #e5e5e5}.usage-bar{height:100%;flex:1;display:flex;align-items:flex-end;justify-content:center;position:relative}.usage-bar>i{width:min(32px,72%);min-height:3px;background:#111;border-radius:7px 7px 3px 3px}.usage-bar>small{position:absolute;bottom:-20px;color:#737373;font-size:10px}.bar-tooltip{display:none;position:absolute;z-index:5;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);min-width:155px;padding:10px 12px;background:#111;color:#fff;border-radius:10px;font-size:10px;line-height:1.55;box-shadow:0 8px 24px rgba(0,0,0,.18)}.bar-tooltip b,.bar-tooltip span{display:block}.usage-bar:hover .bar-tooltip{display:block}
 .chart-hint { color: #737373; font-size: 11px; }
 .account-intro { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.balance-capability-note{display:grid;gap:9px;margin-bottom:18px;padding:15px 17px;border:1px solid var(--tm-line,#e5e5ea);border-radius:16px;background:var(--tm-surface,#f5f5f7);color:var(--tm-muted,#6e6e73)}.balance-capability-toggle{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;width:100%;min-width:0;padding:0 2px 0 0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}.balance-capability-toggle b{grid-column:1;min-width:0;font-size:11px;color:var(--tm-ink,#1d1d1f)}.balance-capability-toggle>span:not(.balance-capability-chevron){grid-column:1;min-width:0;font-size:10px;line-height:1.6}.balance-capability-chevron{grid-column:2;grid-row:1/3;display:grid;width:18px;height:18px;place-items:center;align-self:center;justify-self:end;border:0;background:transparent;color:color-mix(in srgb,var(--tm-ink,#1d1d1f) 48%,transparent)}.balance-capability-chevron svg{display:block;transition:transform 360ms cubic-bezier(.22,1,.36,1)}.balance-capability-note:not(.is-collapsed) .balance-capability-chevron svg{transform:rotate(180deg)}.balance-capability-toggle:hover b{color:var(--tm-accent,#0a84ff)}.balance-capability-toggle:hover .balance-capability-chevron{color:var(--tm-accent,#0a84ff)}.balance-capability-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:7px}.balance-capability-grid>span{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto auto;align-items:center;column-gap:8px;padding:9px 11px;border:1px solid var(--tm-line,#e5e5ea);border-radius:11px;background:var(--tm-bg,#fff)}.balance-capability-grid i{width:8px;height:8px;grid-row:1/3;border-radius:99px;background:#E8B04B}.balance-capability-grid .official i{background:#34c759}.balance-capability-grid b{font-size:10px}.balance-capability-grid small{color:var(--tm-muted,#6e6e73);font-size:9px;line-height:1.5}.theme-liquid-glass .balance-capability-note{padding:0;border-color:transparent;background:transparent}.theme-liquid-glass .balance-capability-grid>span{background:color-mix(in srgb,var(--tm-bg,#fff) 42%,transparent)}.theme-liquid-glass .balance-capability-chevron{background:transparent;border:0}@media (prefers-reduced-motion: reduce){.balance-capability-chevron svg{transition:none}}
 .account-intro h2 { margin-bottom: 5px; }
 .account-intro > span { border: 1px solid #dedede; border-radius: 99px; padding: 6px 10px; color: #525252; font-size: 12px; }
 .dashboard-switcher{display:flex;gap:8px;align-items:center;overflow:auto;margin-bottom:18px}.dashboard-switcher button{background:#fff;color:#525252;border:1px solid #dedede;border-radius:12px;padding:8px 12px;white-space:nowrap}.dashboard-switcher button.active{background:#111;color:#fff;border-color:#111}.dashboard-switcher i{font-style:normal;margin-left:6px;opacity:.65}.dashboard-switcher .add-dashboard{border-style:dashed;color:#111}.dashboard-heading{display:flex;align-items:end;justify-content:space-between;margin-bottom:14px}.dashboard-heading h2{font-size:23px;margin:4px 0 0}.dashboard-heading>span{color:#737373;font-size:12px}.compact{width:380px}.compact select,.compact input{display:block;width:100%;padding:11px;border:1px solid #ddd;border-radius:10px;font:inherit;margin:12px 0}.compact button:not(.close){width:100%}
@@ -1541,7 +1898,7 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
 .balance-alert.warning,.balance-alert.critical{background:#fff0ef;color:#ff3b30;font-weight:700}.floating-module{container-type:inline-size}.floating-module-head strong{max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@container(max-width:180px){.floating-module{padding:9px}.floating-module-head strong{font-size:15px}.floating-module small{font-size:8px}}
 .floating-shell header{cursor:move}.floating-shell header nav,.floating-shell header button,.floating-shell header select{cursor:pointer}.floating-shell header select{width:185px;margin-top:3px;padding:2px 22px 2px 6px;border:0;border-radius:7px;background:#f2f2f7;color:#525252;font:inherit;font-size:9px;outline:none}.floating-shell header b{line-height:1.1}
 .floating-shell header em{font-style:normal;font-size:8px;font-weight:500;color:#86868b}.brand small{font-size:9px;color:#86868b;font-weight:500;vertical-align:middle}
-.provider-overview{display:flex;align-items:center;justify-content:space-between;gap:28px;margin-bottom:18px}.provider-overview-title{display:flex;align-items:flex-start;gap:13px;min-width:260px}.provider-overview-title h2{font-size:21px;margin:5px 0 7px}.provider-overview-title p{margin:0;color:#737373;font-size:12px;line-height:1.55}.provider-overview-grid{display:grid;grid-template-columns:repeat(4,minmax(92px,1fr));gap:10px;flex:1}.provider-overview-grid span{padding:13px;background:#f5f5f5;border-radius:12px}.provider-overview-grid small,.provider-overview-grid b{display:block}.provider-overview-grid small{color:#737373;font-size:10px;margin-bottom:7px}.provider-overview-grid b{font-size:16px;white-space:nowrap}
+.provider-overview{display:flex;align-items:center;justify-content:space-between;gap:28px;margin-bottom:18px}.provider-overview-title{display:flex;align-items:flex-start;gap:13px;min-width:260px}.provider-overview-title>div{min-width:0}.provider-overview-title h2{font-size:21px;margin:5px 0 7px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.provider-overview-title p{margin:0;color:#737373;font-size:12px;line-height:1.55}.provider-overview-grid{display:grid;grid-template-columns:repeat(4,minmax(92px,1fr));gap:10px;flex:1}.provider-overview-grid span{padding:13px;background:#f5f5f5;border-radius:12px}.provider-overview-grid small,.provider-overview-grid b{display:block}.provider-overview-grid small{color:#737373;font-size:10px;margin-bottom:7px}.provider-overview-grid b{font-size:16px;white-space:nowrap}
 .overview-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.overview-metrics span,.overview-metrics small{display:block;color:#737373;font-size:11px}.overview-metrics strong{display:block;margin:9px 0;font-size:23px;letter-spacing:-.6px}.overview-metrics .card{padding:18px 20px}
 .settings{max-width:1100px}.floating-configurator{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:22px;margin-top:24px;padding-top:22px;border-top:1px solid #e5e5e5}.setting-section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.setting-section-title h3,.mini-settings h3{margin:0 0 5px;font-size:15px}.setting-section-title p,.mini-settings p{margin:0}.setting-section-title>span{padding:5px 8px;border-radius:99px;background:#f2f2f7;color:#525252;font-size:10px;white-space:nowrap}.module-checklist{display:grid;gap:7px;margin-top:14px}.settings .module-checklist label{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e5e5ea;border-radius:12px;background:#fff;cursor:grab}.module-checklist label:active{cursor:grabbing}.module-checklist i{font-style:normal;color:#b0b0b5;letter-spacing:-2px}.module-checklist input{margin:0;accent-color:#111}.module-checklist span{min-width:0}.module-checklist b,.module-checklist small{display:block}.module-checklist b{font-size:12px}.module-checklist small{margin-top:3px;color:#86868b;font-size:10px}.mini-settings{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px;padding:15px;background:#f7f7f8;border-radius:14px}.mini-settings h3,.mini-settings>p{grid-column:1/-1}.settings .mini-settings label{padding:0;border:0;color:#737373;font-size:10px}.mini-settings select{display:block;width:100%;margin-top:6px;padding:9px;border:1px solid #dedee3;border-radius:10px;background:#fff;font:inherit;color:#111}.settings .floating-preview{width:auto;padding:0;border:0;background:transparent;display:block}.floating-preview>span{font-size:10px;font-weight:700;letter-spacing:1px}.preview-window{margin-top:9px;padding:15px;background:#fff;border:1px solid #dedee3;border-radius:20px}.preview-window header{margin:0 0 10px}.preview-window header b{font-size:14px}.preview-window header small{color:#86868b;font-size:9px}.preview-module{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid #eee}.preview-module span{color:#737373;font-size:10px}.preview-module b{font-size:12px}.floating-preview>p{font-size:10px;line-height:1.5}
 .floating-modules{display:grid;gap:7px;max-height:calc(100vh - 64px);overflow:auto;padding-right:2px}.floating-module{padding:9px 10px;border-radius:12px;background:#f7f7f8}.floating-module-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.floating-module-head span{color:#737373;font-size:10px}.floating-module-head strong{font-size:17px}.floating-module-head.sub{margin-top:8px}.floating-module>small{display:block;margin-top:5px;color:#86868b;font-size:9px}.floating-module .track{height:6px;margin:6px 0}.floating-module .mini-bars{height:52px;margin-top:5px;background:#fff;border-radius:9px;border-bottom:0}.model-balance-list{display:grid;gap:5px;margin-top:7px}.model-balance-list>span{display:block;padding-top:5px;border-top:1px solid #e5e5e5;font-size:9px;color:#86868b}.model-balance-list b,.model-balance-list small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.model-balance-list b{color:#525252}.mini-core-row{display:grid;grid-template-columns:1fr 1fr;gap:7px}.mini-core-row>span{padding:8px 10px;background:#f2f2f7;border-radius:10px}.mini-core-row small,.mini-core-row b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mini-core-row small{color:#86868b;font-size:8px}.mini-core-row b{margin-top:3px;font-size:13px}.floating-shell.collapsed{height:116px;padding:12px 16px}.floating-shell.collapsed header{margin:0 0 5px;height:40px}
@@ -1566,6 +1923,7 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
 .page-panel{animation:panel-fade-in .2s cubic-bezier(.22,1,.36,1) both}.header-actions{position:relative}.modal-fade-enter-active{transition:opacity .2s cubic-bezier(.22,1,.36,1)}.modal-fade-leave-active{transition:opacity .15s ease}.modal-fade-enter-from,.modal-fade-leave-to{opacity:0}.modal-fade-enter-active .config-modal{transition:opacity .2s cubic-bezier(.22,1,.36,1)}.modal-fade-enter-from .config-modal{opacity:0}.card,.provider-overview,.floating-module{transition:transform .2s cubic-bezier(.22,1,.36,1),box-shadow .2s cubic-bezier(.22,1,.36,1)}.card:hover,.provider-overview:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(0,0,0,.055)}.metric-bar>i,.usage-bar>i,.token-stack>i,.floating-chart-bars i,.mini-bar i{transform-origin:bottom;animation:bar-rise .32s cubic-bezier(.22,1,.36,1) both}@keyframes panel-fade-in{from{opacity:0}to{opacity:1}}@keyframes bar-rise{from{transform:scaleY(.06);opacity:.45}to{transform:scaleY(1);opacity:1}}
 :global(.motion-off) .page-panel,:global(.motion-off) .metric-bar>i,:global(.motion-off) .usage-bar>i,:global(.motion-off) .token-stack>i,:global(.motion-off) .floating-chart-bars i,:global(.motion-off) .mini-bar i{animation:none!important}:global(.motion-off) .card,:global(.motion-off) .provider-overview,:global(.motion-off) .floating-module,:global(.motion-off) .modal-fade-enter-active,:global(.motion-off) .modal-fade-leave-active{transition:none!important}:global(.motion-off) .card:hover,:global(.motion-off) .provider-overview:hover{transform:none;box-shadow:none}@media(prefers-reduced-motion:reduce){.page-panel,.metric-bar>i,.usage-bar>i,.token-stack>i,.floating-chart-bars i,.mini-bar i{animation:none!important}.card,.provider-overview,.modal-fade-enter-active,.modal-fade-leave-active{transition:none!important}.card:hover,.provider-overview:hover{transform:none;box-shadow:none}}
 .remote-content{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:13px;margin:-8px 0 18px;padding:14px 15px;border:1px solid var(--tm-line);border-radius:16px;background:var(--tm-bg);color:var(--tm-ink);animation:panel-fade-in .2s ease}.remote-content+.remote-content,.update-notice+.remote-content{margin-top:-10px}.remote-content-badge{padding:5px 8px;border-radius:99px;background:var(--tm-ink);color:var(--tm-on-ink);font-size:9px;font-weight:700;letter-spacing:.06em}.remote-ad .remote-content-badge{background:var(--tm-surface);color:var(--tm-muted);border:1px solid var(--tm-line)}.remote-content-copy{min-width:0}.remote-content-copy b{display:block;font-size:12px}.remote-content-copy p{margin:4px 0 0;color:var(--tm-muted);font-size:10px;line-height:1.55;white-space:pre-wrap}.remote-content-action{padding:8px 12px!important;border-radius:10px!important;white-space:nowrap}.remote-content-close{display:grid;place-items:center;width:30px;height:30px;padding:0!important;border-radius:9px!important;background:transparent!important;color:var(--tm-muted)!important;font-size:18px}.remote-content-close:hover{background:var(--tm-surface)!important;color:var(--tm-ink)!important}@media(max-width:760px){.remote-content{grid-template-columns:auto 1fr auto}.remote-content-copy{grid-column:2/4}.remote-content-action{grid-column:2}.remote-content-close{grid-row:1;grid-column:3}}
+.monthly-estimate{grid-column:1/-1}.monthly-estimate .section-title strong{font-size:22px}.monthly-estimate .section-title strong.warning{color:#E8B04B}.monthly-estimate .section-title strong.critical{color:#ff3b30}.monthly-estimate .section-title strong.normal{color:#34c759}.monthly-estimate-meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin:16px 0 12px;color:var(--tm-muted);font-size:10px}.monthly-estimate-meta b{color:var(--tm-ink);font-size:12px;font-variant-numeric:tabular-nums}.monthly-estimate .track{height:7px;margin:0}.monthly-estimate>small{display:block;margin-top:9px;color:var(--tm-muted);font-size:9px}
 /* 覆盖旧悬浮窗的宽度与 header 后代规则，确保新版三枚控制键和右侧环形读数始终留在窗口内。 */
 .floating-dashboard-shell{box-sizing:border-box!important;width:100%!important;height:100%!important;font-family:var(--apple-font)!important}
 .floating-dashboard-shell>.floating-dashboard-header{position:relative;box-sizing:border-box;width:100%;display:flex!important;min-width:0;padding-right:6.5rem!important}
@@ -1588,9 +1946,17 @@ async function importBackup(){backupStatus.value='';if(backupPassword.value.leng
 .monitor-launch span{color:inherit!important}.monitor-launch.running{background:var(--tm-ink)!important;color:var(--tm-on-ink)!important}.monitor-launch.running span,.floating-shell button.proxyLive{color:inherit!important}
 @media(max-width:1180px){.monitor-status-bar{grid-template-columns:1fr auto}.monitor-status-signals{grid-column:1}.monitor-status-action{grid-column:2;grid-row:1/3}.monitor-status-brand em{max-width:460px}}
 @media(max-width:760px){.monitor-status-bar{grid-template-columns:1fr}.monitor-status-signals{grid-column:auto;flex-wrap:wrap}.monitor-status-action{grid-column:auto;grid-row:auto}.monitor-status-brand em{white-space:normal}.monitor-signal{flex:1}.monitor-endpoints{grid-column:auto}}
-.health-launch{display:flex;min-height:42px;flex:0 0 auto;align-items:center;justify-content:center;gap:10px;padding:8px 11px;border:1px solid var(--tm-line);border-radius:13px;background:var(--tm-bg);color:var(--tm-ink);box-shadow:none}.health-launch>span{display:flex;align-items:center;gap:7px;white-space:nowrap}.health-launch i{width:7px;height:7px;flex:0 0 auto;border-radius:50%;background:#34c759;box-shadow:0 0 0 4px color-mix(in srgb,#34c759 13%,transparent)}.health-launch b{font-size:10px}.health-launch small{color:var(--tm-muted);font-size:8px;white-space:nowrap}.health-launch:hover{background:var(--tm-surface)}.health-launch:focus-visible{outline:2px solid var(--tm-ink);outline-offset:2px}.health-launch.warning i{background:#ff9f0a;box-shadow:0 0 0 4px color-mix(in srgb,#ff9f0a 14%,transparent)}
+.health-launch{display:flex;min-height:42px;flex:0 0 auto;align-items:center;justify-content:center;gap:10px;padding:8px 11px;border:1px solid var(--tm-line);border-radius:13px;background:var(--tm-bg);color:var(--tm-ink);box-shadow:none}.health-launch>span{display:flex;align-items:center;gap:7px;white-space:nowrap}.health-launch i{width:7px;height:7px;flex:0 0 auto;border-radius:50%;background:#34c759;box-shadow:0 0 0 4px color-mix(in srgb,#34c759 13%,transparent)}.health-launch b{font-size:10px}.health-launch small{color:var(--tm-muted);font-size:8px;white-space:nowrap}.health-launch:hover{background:var(--tm-surface)}.health-launch:focus-visible{outline:2px solid var(--tm-ink);outline-offset:2px}.health-launch.warning i{background:#E8B04B;box-shadow:0 0 0 4px color-mix(in srgb,#E8B04B 14%,transparent)}
 .opencode-local-source{flex-wrap:wrap}.opencode-source-mode{display:grid;gap:4px;min-width:164px;color:var(--tm-muted);font-size:9px}.opencode-source-mode select{min-height:36px;padding:7px 30px 7px 10px;border:1px solid var(--tm-line);border-radius:10px;background:var(--tm-bg);color:var(--tm-ink);font:inherit;font-size:10px}
 .dashboard-context-heading .source-badge{margin-left:auto}.dashboard-zero-state{display:grid;justify-items:center;gap:8px;padding:44px 24px;border:1px dashed var(--tm-line);border-radius:16px;background:var(--tm-card);text-align:center}.dashboard-zero-state b{font-size:17px}.dashboard-zero-state p{max-width:520px;margin:0;color:var(--tm-muted);font-size:12px;line-height:1.6}
 @media(max-width:1180px){.content>header{align-items:stretch;flex-direction:column;gap:14px;margin-bottom:22px}.header-copy{min-width:0}.header-actions{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:8px;width:100%;max-width:100%}.header-actions>.theme-switcher,.health-launch,.monitor-launch,.sync{width:100%;min-width:0}.header-actions :deep(.theme-trigger){width:100%;justify-content:center}.monitor-launch-copy{min-width:0}.monitor-launch-copy b,.monitor-launch-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 @media(max-width:1050px){.health-launch small{display:none}.health-launch{padding-inline:14px}.monitor-launch{order:initial;flex-basis:auto}.sync{margin-left:0}}
+/* 余额能力说明使用独立文案列，避免半屏和高 DPI 下标题、正文与箭头互相挤压。 */
+.balance-capability-toggle{grid-template-columns:minmax(0,1fr) 32px!important;align-items:center!important;gap:12px!important;min-height:46px!important;padding:0!important}
+.balance-capability-copy{display:grid!important;grid-column:1!important;grid-row:1!important;min-width:0;gap:4px;font-size:inherit!important;line-height:normal!important}
+.balance-capability-copy>b{min-width:0;color:var(--tm-ink,#1d1d1f);font-size:11px;line-height:1.35}
+.balance-capability-copy>span{min-width:0;color:var(--tm-muted,#6e6e73);font-size:10px;line-height:1.45;white-space:normal}
+.balance-capability-chevron{grid-column:2!important;grid-row:1!important;width:30px!important;height:30px!important;border-radius:10px!important;background:var(--tm-bg,#fff)!important;box-shadow:inset 0 0 0 1px var(--tm-line,#e5e5ea)}
+.dashboard-picker{overflow:visible!important}.dashboard-picker>p{margin:2px 0 0;color:var(--tm-muted);font-size:10px;line-height:1.55}
+@media(max-width:760px){.balance-capability-copy>span{font-size:9px}.dashboard-picker{width:min(92vw,520px)}}
 </style>

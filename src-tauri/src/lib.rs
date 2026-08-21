@@ -30,16 +30,17 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
         Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, State, WindowEvent,
 };
+use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_notification::NotificationExt;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -99,6 +100,34 @@ struct FloatingWindowRuntime {
     interaction: Mutex<String>,
     radius: Mutex<f64>,
     snap_to_edges: Mutex<bool>,
+    transition_revision: AtomicU64,
+    transition_active: AtomicBool,
+    presentation: Mutex<String>,
+    mode: Mutex<String>,
+    side: Mutex<String>,
+    expanded_bounds: Mutex<Option<FloatingNativeBounds>>,
+    always_on_top: AtomicBool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+struct FloatingNativeBounds {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FloatingWindowStateView {
+    transition_id: u64,
+    transitioning: bool,
+    presentation: String,
+    mode: String,
+    side: String,
+    bounds: Option<FloatingNativeBounds>,
+    always_on_top: bool,
 }
 
 impl Default for FloatingWindowRuntime {
@@ -114,6 +143,13 @@ impl Default for FloatingWindowRuntime {
             interaction: Mutex::new("interactive".into()),
             radius: Mutex::new(24.0),
             snap_to_edges: Mutex::new(true),
+            transition_revision: AtomicU64::new(0),
+            transition_active: AtomicBool::new(false),
+            presentation: Mutex::new("window".into()),
+            mode: Mutex::new("compact".into()),
+            side: Mutex::new("right".into()),
+            expanded_bounds: Mutex::new(None),
+            always_on_top: AtomicBool::new(false),
         }
     }
 }
@@ -358,7 +394,11 @@ struct BackupBundle {
 #[derive(Debug, Serialize, Deserialize)]
 struct BackupEnvelope {
     version: u8,
+    #[serde(default)]
+    local: bool,
+    #[serde(default)]
     salt: String,
+    #[serde(default)]
     nonce: String,
     ciphertext: String,
 }
@@ -538,6 +578,108 @@ async fn verify_update_artifact(
         sha256: actual_hash,
     })
 }
+
+/// Tauri 更新公钥（与 tauri.conf.json plugins.updater.pubkey 一致，公开信息）。
+const UPDATER_PUBLIC_KEY_B64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhCMTY0NjMyQUZEQUZBNkYKUldSdit0cXZNa1lXaXlYckdQRnErdjFDeU91YmxYaFE1eWpNMlVFbzRLWWl6M0JQSVppTzFTUlQK";
+
+#[derive(Debug, Serialize)]
+struct GithubFallbackInstallResult {
+    installer_path: String,
+    sha256: String,
+    size_bytes: u64,
+}
+
+/// 官方更新频道（Netlify）不可用时的兜底安装：从 GitHub Release 直接下载安装包与签名，
+/// 用 Tauri 更新公钥做 minisign 校验（与官方更新器同一密钥、同一 prehashed 模式），
+/// 通过后以被动模式（/P /R /UPDATE，与官方更新器一致）启动 NSIS 安装程序。
+/// GitHub 发布页不提供官方 SHA-256，因此以大小校验 + 签名校验为准；实际 SHA-256 下载后回传供展示。
+#[tauri::command]
+async fn github_fallback_install(
+    asset_url: String,
+    sig_url: String,
+    expected_size_bytes: u64,
+) -> Result<GithubFallbackInstallResult, String> {
+    if !asset_url.starts_with("https://github.com/") || !sig_url.starts_with("https://github.com/")
+    {
+        return Err("兜底更新只允许从 GitHub 官方发布资产下载".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10 * 60))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let sig_text = client
+        .get(&sig_url)
+        .send()
+        .await
+        .map_err(|error| format!("无法下载更新签名：{error}"))?
+        .error_for_status()
+        .map_err(|error| format!("更新签名地址不可用：{error}"))?
+        .text()
+        .await
+        .map_err(|error| format!("读取更新签名失败：{error}"))?;
+    if sig_text.len() > 16 * 1024 {
+        return Err("更新签名文件异常过大".into());
+    }
+    let file_name = asset_url
+        .rsplit('/')
+        .next()
+        .filter(|name| name.ends_with(".exe"))
+        .ok_or_else(|| "更新包地址缺少安装程序文件名".to_string())?;
+    let dest_dir = dirs::cache_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("token-manager-updates");
+    std::fs::create_dir_all(&dest_dir).map_err(|error| format!("无法创建更新目录：{error}"))?;
+    let dest = dest_dir.join(file_name);
+    let response = client
+        .get(&asset_url)
+        .send()
+        .await
+        .map_err(|error| format!("无法下载更新包：{error}"))?
+        .error_for_status()
+        .map_err(|error| format!("更新包地址不可用：{error}"))?;
+    let mut stream = response.bytes_stream();
+    let mut hasher = Sha256::new();
+    let mut size = 0_u64;
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| format!("读取更新包失败：{error}"))?;
+        size = size.saturating_add(chunk.len() as u64);
+        if size > 1024 * 1024 * 1024 {
+            return Err("更新包超过 1 GB 安全限制".into());
+        }
+        hasher.update(&chunk);
+        bytes.extend_from_slice(&chunk);
+    }
+    if expected_size_bytes > 0 && size != expected_size_bytes {
+        return Err(format!(
+            "更新包大小不一致：期望 {expected_size_bytes}，实际 {size}"
+        ));
+    }
+    let public_key_text = String::from_utf8(
+        BASE64
+            .decode(UPDATER_PUBLIC_KEY_B64)
+            .map_err(|_| "更新公钥无效")?,
+    )
+    .map_err(|_| "更新公钥无效")?;
+    let public_key =
+        minisign_verify::PublicKey::decode(&public_key_text).map_err(|_| "更新公钥无法解析")?;
+    let signature =
+        minisign_verify::Signature::decode(&sig_text).map_err(|_| "更新签名无法解析")?;
+    public_key
+        .verify(&bytes, &signature, true)
+        .map_err(|_| "Tauri 更新签名校验失败，已禁止安装")?;
+    std::fs::write(&dest, &bytes).map_err(|error| format!("写入更新包失败：{error}"))?;
+    std::process::Command::new(&dest)
+        .args(["/P", "/R", "/UPDATE"])
+        .spawn()
+        .map_err(|error| format!("无法启动安装程序：{error}"))?;
+    Ok(GithubFallbackInstallResult {
+        installer_path: dest.to_string_lossy().into_owned(),
+        sha256: format!("{:X}", hasher.finalize()),
+        size_bytes: size,
+    })
+}
+
 pub(crate) struct AppDb(pub(crate) Mutex<Connection>);
 pub struct ProxyServerState(Mutex<HashMap<u16, String>>);
 pub struct ProxyJobCoordinator {
@@ -751,13 +893,50 @@ fn usage_counts(value: &serde_json::Value) -> Option<(u64, u64, u64)> {
     }
     None
 }
-fn response_usage(
-    body: &[u8],
-    model: &str,
-    provider: &str,
-    status: u16,
-    account_id: Option<&str>,
-) -> Option<String> {
+/// Prompt 用量标记开关（默认关闭）。开启后代理仅对请求的首条用户消息计算
+/// SHA-256 指纹用于统计关联；不保存、不上传任何提示词或响应正文。
+static PROMPT_USAGE_TRACKING: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn set_prompt_usage_tracking(enabled: bool) {
+    PROMPT_USAGE_TRACKING.store(enabled, Ordering::Relaxed);
+}
+
+/// 取 OpenAI/Anthropic 兼容请求的首条用户消息文本指纹（十六进制 SHA-256）。
+/// 只返回不可逆的哈希，正文不落盘。
+fn first_user_message_hash(payload: &serde_json::Value) -> Option<String> {
+    let text = payload
+        .get("messages")
+        .and_then(|messages| messages.as_array())?
+        .iter()
+        .find(|message| message.get("role").and_then(|role| role.as_str()) == Some("user"))?
+        .get("content")
+        .and_then(|content| match content {
+            serde_json::Value::String(value) => Some(value.clone()),
+            serde_json::Value::Array(parts) => {
+                let mut joined = String::new();
+                for part in parts {
+                    if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
+                        joined.push_str(text);
+                    }
+                }
+                if joined.is_empty() {
+                    None
+                } else {
+                    Some(joined)
+                }
+            }
+            _ => None,
+        })?;
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(format!("{:x}", Sha256::digest(text.as_bytes())))
+}
+
+/// 解析响应/SSE 流中的 usage 字段，返回 (input, output, cached) 的最大值合并。
+/// 与全量 `usage_values` 语义一致，供非流式响应与流式增量解析共用。
+fn parse_usage_counts(body: &[u8]) -> (u64, u64, u64) {
     let mut input = 0;
     let mut output = 0;
     let mut cached = 0;
@@ -768,11 +947,24 @@ fn response_usage(
             cached = cached.max(next_cached)
         }
     }
+    (input, output, cached)
+}
+
+/// 把一次代理请求的用量事件写入本地库（复用全局 AppDb 连接），返回事件 id。
+/// 调用方负责提供连接；落库失败静默返回 None（保持原行为）。
+fn store_usage_event(
+    db: &Connection,
+    model: &str,
+    provider: &str,
+    status: u16,
+    account_id: Option<&str>,
+    prompt_hash: Option<String>,
+    input: u64,
+    output: u64,
+    cached: u64,
+) -> Option<String> {
     let cost = provider_cost(provider, model, input, output, cached);
     let task = if status >= 400 { "失败" } else { "其他" };
-    let Ok(db) = Connection::open(data_path()) else {
-        return None;
-    };
     let id = uuid_like();
     let event = UsageEvent {
         id: id.clone(),
@@ -795,8 +987,100 @@ fn response_usage(
     );
     provenance.account_id = account_id.map(str::to_string);
     provenance.source_ref = Some(id.clone());
-    reliability::upsert_usage(&db, &event, &provenance).ok()?;
+    provenance.prompt_hash = prompt_hash;
+    reliability::upsert_usage(db, &event, &provenance).ok()?;
     Some(id)
+}
+
+/// 流式 SSE 增量 usage 解析器：跨 chunk 保留未完成行，逐行解析 data: JSON，
+/// 取 input/output/cached 最大值合并（语义与全量解析一致），
+/// 不再把整个响应体累积在内存中等待流结束。
+#[derive(Default)]
+struct UsageAccumulator {
+    input: u64,
+    output: u64,
+    cached: u64,
+    pending: Vec<u8>,
+}
+
+impl UsageAccumulator {
+    /// 追加一个网络 chunk；按 \n 切出完整行解析，未完成的行保留到下一 chunk。
+    fn push(&mut self, chunk: &[u8]) {
+        self.pending.extend_from_slice(chunk);
+        let mut updates = Vec::new();
+        let mut consumed = 0;
+        for (index, &byte) in self.pending.iter().enumerate() {
+            if byte == b'\n' {
+                if let Some(counts) = Self::consume_line(&self.pending[consumed..index]) {
+                    updates.push(counts);
+                }
+                consumed = index + 1;
+            }
+        }
+        for (input, output, cached) in updates {
+            self.input = self.input.max(input);
+            self.output = self.output.max(output);
+            self.cached = self.cached.max(cached);
+        }
+        if consumed > 0 {
+            self.pending.drain(..consumed);
+        }
+        // 防御：异常长的单行（无换行）直接放弃，避免内存无限增长。
+        if self.pending.len() > 8 * 1024 * 1024 {
+            self.pending.clear();
+        }
+    }
+
+    /// 解析一行 SSE 数据；非 data: 行、[DONE] 或 JSON 解析失败返回 None。
+    fn consume_line(line: &[u8]) -> Option<(u64, u64, u64)> {
+        let trimmed = trim_ascii_whitespace(line);
+        let data = trimmed.strip_prefix(b"data:")?;
+        let data = trim_ascii_whitespace(data);
+        if data == b"[DONE]" {
+            return None;
+        }
+        let value: serde_json::Value = serde_json::from_slice(data).ok()?;
+        usage_counts(&value)
+    }
+
+    fn counts(&self) -> (u64, u64, u64) {
+        (self.input, self.output, self.cached)
+    }
+}
+
+fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
+    let mut start = 0;
+    let mut end = bytes.len();
+    while start < end && (bytes[start] as char).is_whitespace() {
+        start += 1;
+    }
+    while end > start && (bytes[end - 1] as char).is_whitespace() {
+        end -= 1;
+    }
+    &bytes[start..end]
+}
+
+/// DeepSeek 余额同步节流：30 秒窗口内只允许一次，避免每次对话都打余额接口触发平台限流。
+static LAST_DEEPSEEK_BALANCE_SYNC_AT: AtomicI64 = AtomicI64::new(0);
+const DEEPSEEK_BALANCE_SYNC_INTERVAL_SECS: i64 = 30;
+
+fn try_claim_deepseek_balance_sync() -> bool {
+    let now = Utc::now().timestamp();
+    let mut last = LAST_DEEPSEEK_BALANCE_SYNC_AT.load(Ordering::Relaxed);
+    loop {
+        if now.saturating_sub(last) < DEEPSEEK_BALANCE_SYNC_INTERVAL_SECS {
+            return false;
+        }
+        match LAST_DEEPSEEK_BALANCE_SYNC_AT.compare_exchange_weak(
+            last,
+            now,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return true,
+            Err(actual) => last = actual,
+        }
+    }
 }
 
 async fn fetch_and_store_deepseek_balance(
@@ -876,6 +1160,13 @@ async fn proxy_request(
         .map(|v| v.as_str())
         .unwrap_or("/");
     let mut payload_value = serde_json::from_slice::<serde_json::Value>(&payload).ok();
+    let prompt_hash = if PROMPT_USAGE_TRACKING.load(Ordering::Relaxed) {
+        payload_value
+            .as_ref()
+            .and_then(|value| first_user_message_hash(value))
+    } else {
+        None
+    };
     let raw_model = payload_value
         .as_ref()
         .and_then(|v| v.get("model").and_then(|m| m.as_str()).map(str::to_owned))
@@ -902,7 +1193,15 @@ async fn proxy_request(
                 .entry("stream_options")
                 .or_insert_with(|| serde_json::json!({}));
             if let Some(options) = options.as_object_mut() {
+                // 强制覆盖：即使客户端显式传了 include_usage=false 也改为 true，
+                // 保证 DeepSeek 在 [DONE] 前返回总 Token，计量不缺失。
                 options.insert("include_usage".into(), serde_json::Value::Bool(true));
+            } else {
+                // stream_options 存在但不是对象（异常负载）：整体重建。
+                value.insert(
+                    "stream_options".into(),
+                    serde_json::json!({ "include_usage": true }),
+                );
             }
         }
     }
@@ -951,13 +1250,22 @@ async fn proxy_request(
     let mut remote = match outbound.send().await {
         Ok(response) => response,
         Err(error) => {
-            let event_id = response_usage(
-                &[],
-                &model,
-                &runtime.provider,
-                StatusCode::BAD_GATEWAY.as_u16(),
-                runtime.account_id.as_deref(),
-            );
+            let db_state = runtime.app.state::<AppDb>();
+            let locked = db_state.0.lock();
+            let event_id = match locked {
+                Ok(db) => store_usage_event(
+                    &db,
+                    &model,
+                    &runtime.provider,
+                    StatusCode::BAD_GATEWAY.as_u16(),
+                    runtime.account_id.as_deref(),
+                    prompt_hash,
+                    0,
+                    0,
+                    0,
+                ),
+                Err(_) => None,
+            };
             runtime
                 .app
                 .emit(
@@ -991,12 +1299,14 @@ async fn proxy_request(
             tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(24);
         let stream_runtime = runtime.clone();
         let stream_model = model.clone();
+        let stream_prompt_hash = prompt_hash.clone();
         tauri::async_runtime::spawn(async move {
-            let mut captured = Vec::new();
+            // 转发时按行增量解析 usage，不再把整个响应体累积在内存中。
+            let mut accumulator = UsageAccumulator::default();
             loop {
                 match remote.chunk().await {
                     Ok(Some(bytes)) => {
-                        captured.extend_from_slice(&bytes);
+                        accumulator.push(&bytes);
                         if sender.send(Ok(bytes)).await.is_err() {
                             break;
                         }
@@ -1010,20 +1320,24 @@ async fn proxy_request(
                     }
                 }
             }
-            let event_id = response_usage(
-                &captured,
-                &stream_model,
-                &stream_runtime.provider,
-                status.as_u16(),
-                stream_runtime.account_id.as_deref(),
-            );
-            if stream_runtime.provider == "DeepSeek" {
-                if let (Some(id), Some(key)) = (&stream_runtime.account_id, &stream_runtime.api_key)
-                {
-                    let _ =
-                        fetch_and_store_deepseek_balance(id, &stream_runtime.upstream, key).await;
-                }
-            }
+            let (input, output, cached) = accumulator.counts();
+            let db_state = stream_runtime.app.state::<AppDb>();
+            let locked = db_state.0.lock();
+            let event_id = match locked {
+                Ok(db) => store_usage_event(
+                    &db,
+                    &stream_model,
+                    &stream_runtime.provider,
+                    status.as_u16(),
+                    stream_runtime.account_id.as_deref(),
+                    stream_prompt_hash,
+                    input,
+                    output,
+                    cached,
+                ),
+                Err(_) => None,
+            };
+            // 先通知前端用量已更新，DeepSeek 余额同步放后台，不再阻塞计量展示。
             stream_runtime
                 .app
                 .emit(
@@ -1036,6 +1350,30 @@ async fn proxy_request(
                     }),
                 )
                 .ok();
+            if stream_runtime.provider == "DeepSeek" && try_claim_deepseek_balance_sync() {
+                if let (Some(id), Some(key)) = (&stream_runtime.account_id, &stream_runtime.api_key)
+                {
+                    let balance_app = stream_runtime.app.clone();
+                    let upstream = stream_runtime.upstream.clone();
+                    let account_id = id.clone();
+                    let api_key = key.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = fetch_and_store_deepseek_balance(&account_id, &upstream, &api_key)
+                            .await;
+                        // 余额落库后再通知一次，前端刷新余额卡与历史曲线。
+                        balance_app
+                            .emit(
+                                "usage-updated",
+                                serde_json::json!({
+                                    "provider": "DeepSeek",
+                                    "account_id": account_id,
+                                    "at": Utc::now().to_rfc3339(),
+                                }),
+                            )
+                            .ok();
+                    });
+                }
+            }
         });
         let body_stream = futures_util::stream::unfold(receiver, |mut receiver| async move {
             receiver.recv().await.map(|item| (item, receiver))
@@ -1048,18 +1386,24 @@ async fn proxy_request(
         .bytes()
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
-    let event_id = response_usage(
-        &bytes,
-        &model,
-        &runtime.provider,
-        status.as_u16(),
-        runtime.account_id.as_deref(),
-    );
-    if runtime.provider == "DeepSeek" {
-        if let (Some(id), Some(key)) = (&runtime.account_id, &runtime.api_key) {
-            let _ = fetch_and_store_deepseek_balance(id, &runtime.upstream, key).await;
-        }
-    }
+    let (input, output, cached) = parse_usage_counts(&bytes);
+    let db_state = runtime.app.state::<AppDb>();
+    let locked = db_state.0.lock();
+    let event_id = match locked {
+        Ok(db) => store_usage_event(
+            &db,
+            &model,
+            &runtime.provider,
+            status.as_u16(),
+            runtime.account_id.as_deref(),
+            prompt_hash,
+            input,
+            output,
+            cached,
+        ),
+        Err(_) => None,
+    };
+    // 先通知前端用量已更新，DeepSeek 余额同步放后台，不再阻塞计量展示。
     runtime
         .app
         .emit(
@@ -1072,6 +1416,28 @@ async fn proxy_request(
             }),
         )
         .ok();
+    if runtime.provider == "DeepSeek" && try_claim_deepseek_balance_sync() {
+        if let (Some(id), Some(key)) = (&runtime.account_id, &runtime.api_key) {
+            let balance_app = runtime.app.clone();
+            let upstream = runtime.upstream.clone();
+            let account_id = id.clone();
+            let api_key = key.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = fetch_and_store_deepseek_balance(&account_id, &upstream, &api_key).await;
+                // 余额落库后再通知一次，前端刷新余额卡与历史曲线。
+                balance_app
+                    .emit(
+                        "usage-updated",
+                        serde_json::json!({
+                            "provider": "DeepSeek",
+                            "account_id": account_id,
+                            "at": Utc::now().to_rfc3339(),
+                        }),
+                    )
+                    .ok();
+            });
+        }
+    }
     builder
         .body(Body::from(bytes))
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
@@ -1682,34 +2048,91 @@ async fn fetch_account_models(id: String, state: State<'_, AppDb>) -> Result<Vec
     models.dedup();
     Ok(models)
 }
-/// CSS 圆角只能裁切 WebView 内容，无法裁掉 Windows Acrylic 的原生矩形合成面。
+/// CSS 圆角只能裁切 WebView 内容，无法裁掉 Windows 原生窗口合成面的矩形边缘
+/// （例如透明窗口的系统合成区域；本程序当前未集成系统 Acrylic/Mica 材质，
+/// 见 .ai-workspace/Documentation 32_ANIMATION_EVALUATION.md Phase 2 决策门）。
 /// 使用 Win32 窗口区域同步裁切整个悬浮窗，彻底消除四角透明方框残留。
 #[cfg(windows)]
-fn apply_floating_rounded_region(
+fn enforce_floating_borderless(window: &tauri::WebviewWindow) -> Result<(), String> {
+    use windows_sys::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED,
+            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
+            WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
+        },
+    };
+
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?.0 as HWND;
+    let original = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32;
+    let decoration_mask = WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+    let borderless = (original & !decoration_mask) | WS_POPUP;
+    if borderless != original {
+        unsafe {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, borderless as isize);
+        }
+    }
+    let applied = unsafe {
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED
+                | SWP_NOACTIVATE
+                | SWP_NOMOVE
+                | SWP_NOOWNERZORDER
+                | SWP_NOSIZE
+                | SWP_NOZORDER,
+        )
+    };
+    if applied == 0 {
+        return Err("Windows 未能刷新悬浮窗无边框样式".into());
+    }
+    let verified = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32;
+    if verified & decoration_mask != 0 {
+        return Err("悬浮窗仍含有系统标题栏样式".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn apply_floating_rounded_region_internal(
     window: &tauri::WebviewWindow,
     radius_points: f64,
+    redraw: bool,
+) -> Result<(), String> {
+    let size = window.inner_size().map_err(|error| error.to_string())?;
+    apply_floating_rounded_region_for_size(window, size.width, size.height, radius_points, redraw)
+}
+
+#[cfg(windows)]
+fn apply_floating_rounded_region_for_size(
+    window: &tauri::WebviewWindow,
+    width: u32,
+    height: u32,
+    radius_points: f64,
+    redraw: bool,
 ) -> Result<(), String> {
     use windows_sys::Win32::{
         Foundation::HWND,
         Graphics::Dwm::DwmSetWindowAttribute,
-        Graphics::Gdi::{
-            CreateRoundRectRgn, DeleteObject, RedrawWindow, SetWindowRgn, RDW_FRAME,
-            RDW_INVALIDATE, RDW_UPDATENOW,
-        },
+        Graphics::Gdi::{CreateRoundRectRgn, DeleteObject, SetWindowRgn},
     };
 
-    let size = window.inner_size().map_err(|error| error.to_string())?;
     let scale = window.scale_factor().map_err(|error| error.to_string())?;
     // 胶囊模式传入一个极大半径，并在这里严格钳制为窗口高度的一半，
     // 从而保证左右端帽始终是完整半圆，而不是普通圆角矩形。
-    let max_radius = size.height as f64 / 2.0;
+    let max_radius = height as f64 / 2.0;
     let radius = (radius_points * scale).min(max_radius).round().max(1.0) as i32;
     let region = unsafe {
         CreateRoundRectRgn(
             0,
             0,
-            (size.width as i32).saturating_add(1),
-            (size.height as i32).saturating_add(1),
+            (width as i32).saturating_add(1),
+            (height as i32).saturating_add(1),
             radius * 2,
             radius * 2,
         )
@@ -1742,22 +2165,15 @@ fn apply_floating_rounded_region(
             std::mem::size_of::<u32>() as u32,
         );
     }
-    let applied = unsafe { SetWindowRgn(hwnd.0 as HWND, region, 1) };
+    let applied = unsafe { SetWindowRgn(hwnd.0 as HWND, region, i32::from(redraw)) };
     if applied == 0 {
         unsafe {
             DeleteObject(region);
         }
         return Err("Windows 未能应用悬浮窗圆角区域".into());
     }
-    // 立即重绘非客户区和客户区，清掉形态切换前遗留的旧矩形边缘。
-    unsafe {
-        let _ = RedrawWindow(
-            hwnd.0 as HWND,
-            std::ptr::null(),
-            std::ptr::null_mut(),
-            RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW,
-        );
-    }
+    // SetWindowRgn 的 redraw=true 已经请求系统重绘。不要再同步调用
+    // RDW_UPDATENOW；WebView2 在透明窗口改变尺寸时会因此短暂提交白色帧。
     // SetWindowRgn 成功后区域所有权交给系统，不能再次 DeleteObject。
     Ok(())
 }
@@ -1777,14 +2193,15 @@ fn configure_floating_renderer(
         };
     } else {
         // DXGI/D3D11 捕获能力异常、远程桌面或设备丢失时，必须留在同一窗口安全降级。
-        // 当前 Windows WebView 使用系统 Acrylic 背板，Vue 内容层仍保留分层折射边缘。
+        // 本程序未集成系统 Acrylic/Mica（见 32_ANIMATION_EVALUATION.md Phase 2 决策门）；
+        // 降级路径由 WebView CSS 材质层完成（v0.13.25 起悬浮窗为不透明主题材质）。
         let fps = if config.quality == "high" { 60 } else { 30 };
         *status = FloatingRenderStatus {
-            backend: "acrylic".into(),
+            backend: "css-material".into(),
             state: "degraded".into(),
             fps,
             detail: format!(
-                "同进程 Acrylic 安全背板 · {} · 通透度 {:.0}% · 扭曲 {:.0}%",
+                "WebView CSS 材质降级（无系统 Acrylic） · {} · 通透度 {:.0}% · 扭曲 {:.0}%",
                 if config.tone == "clear" {
                     "纯白"
                 } else {
@@ -1836,6 +2253,629 @@ fn set_floating_interaction_mode(
     Ok(())
 }
 
+#[cfg(windows)]
+fn apply_floating_rounded_region(
+    window: &tauri::WebviewWindow,
+    radius_points: f64,
+) -> Result<(), String> {
+    apply_floating_rounded_region_internal(window, radius_points, true)
+}
+
+fn floating_mode_minimum(mode: &str) -> (f64, f64) {
+    match mode {
+        "capsule" => (360.0, 152.0),
+        "full" => (560.0, 560.0),
+        _ => (460.0, 320.0),
+    }
+}
+
+fn floating_smootherstep(progress: f64) -> f64 {
+    // 五次 smootherstep 在起点和终点的一、二阶导数都为 0。相比旧的 easeOutQuart，
+    // 小把手不会在前两帧突然放大大半，结束时也不会出现最后一格“撞停”。
+    let value = progress.clamp(0.0, 1.0);
+    value * value * value * (value * (value * 6.0 - 15.0) + 10.0)
+}
+
+fn floating_ease_out_cubic(progress: f64) -> f64 {
+    // 普通形态切换需要更快建立方向感，再平缓落到终点。相比对称 smootherstep，
+    // ease-out cubic 不会在起点停顿，也没有弹跳或过冲，更接近系统面板形变。
+    let value = progress.clamp(0.0, 1.0);
+    1.0 - (1.0 - value).powi(3)
+}
+
+fn floating_current_bounds(window: &tauri::WebviewWindow) -> Result<FloatingNativeBounds, String> {
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    let size = window.inner_size().map_err(|error| error.to_string())?;
+    Ok(FloatingNativeBounds {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
+fn set_floating_physical_bounds(
+    window: &tauri::WebviewWindow,
+    bounds: FloatingNativeBounds,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
+        };
+        let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+        // 位置和尺寸必须在同一帧提交。分别调用 Tauri 的 set_position/set_size
+        // 会让 Windows 产生两次布局与两次 WebView 重排，15 帧动画就会出现卡顿、
+        // 白闪和总时长漂移。SetWindowPos 将一帧压缩为一次原生提交。
+        let applied = unsafe {
+            SetWindowPos(
+                hwnd.0 as windows_sys::Win32::Foundation::HWND,
+                std::ptr::null_mut(),
+                bounds.x,
+                bounds.y,
+                bounds.width as i32,
+                bounds.height as i32,
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER,
+            )
+        };
+        if applied == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        window
+            .set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+                bounds.x, bounds.y,
+            )))
+            .map_err(|error| error.to_string())?;
+        window
+            .set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+                bounds.width,
+                bounds.height,
+            )))
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn clamp_floating_bounds_to_monitor(
+    window: &tauri::WebviewWindow,
+    mut bounds: FloatingNativeBounds,
+) -> FloatingNativeBounds {
+    if let Ok(Some(monitor)) = window.current_monitor() {
+        let area = monitor.work_area();
+        let left = area.position.x;
+        let top = area.position.y;
+        let right = left + area.size.width as i32;
+        let bottom = top + area.size.height as i32;
+        bounds.x = bounds
+            .x
+            .clamp(left, (right - bounds.width as i32).max(left));
+        bounds.y = bounds
+            .y
+            .clamp(top, (bottom - bounds.height as i32).max(top));
+    }
+    bounds
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_floating_window_transition(
+    app: AppHandle,
+    mode: String,
+    presentation: String,
+    width: f64,
+    height: f64,
+    radius: f64,
+    always_on_top: bool,
+    animate: bool,
+    anchor_top: bool,
+    transient_peek: bool,
+) -> Result<u64, String> {
+    if !matches!(mode.as_str(), "capsule" | "compact" | "full") {
+        return Err("不支持的悬浮窗形态".into());
+    }
+    if !matches!(presentation.as_str(), "window" | "edge-handle") {
+        return Err("不支持的悬浮窗展示状态".into());
+    }
+    let window = app
+        .get_webview_window("floating")
+        .ok_or_else(|| "悬浮窗尚未创建".to_string())?;
+    // 某些 Windows/WebView2 组合在快速取消原生尺寸过渡后会错误恢复
+    // WS_CAPTION，表现为悬浮窗突然出现系统标题栏。每次过渡开始都重新
+    // 声明无边框，避免把内部悬浮功能变成普通桌面窗口。
+    window
+        .set_decorations(false)
+        .map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    enforce_floating_borderless(&window)?;
+    let state = app.state::<FloatingWindowRuntime>();
+    let transition_id = state.transition_revision.fetch_add(1, Ordering::SeqCst) + 1;
+    state.transition_active.store(true, Ordering::SeqCst);
+
+    let current = floating_current_bounds(&window)?;
+    let scale = window.scale_factor().map_err(|error| error.to_string())?;
+    let previous_presentation = state
+        .presentation
+        .lock()
+        .map(|value| value.clone())
+        .unwrap_or_else(|_| "window".into());
+    if !transient_peek && presentation == "edge-handle" && previous_presentation != "edge-handle" {
+        if let Ok(mut stored) = state.expanded_bounds.lock() {
+            *stored = Some(current);
+        }
+    }
+
+    let (logical_width, logical_height) = if transient_peek {
+        // 预览只扩出一张轻量摘要卡，绝不使用胶囊/紧凑窗口的最小尺寸。
+        // 这样悬停在视觉和状态上都仍然是“把手 + 预览”。
+        (width.clamp(276.0, 320.0), height.clamp(76.0, 104.0))
+    } else if presentation == "edge-handle" {
+        (28.0, 46.0)
+    } else {
+        let (minimum_width, minimum_height) = floating_mode_minimum(&mode);
+        (
+            width.clamp(minimum_width, 960.0),
+            height.clamp(minimum_height, 1000.0),
+        )
+    };
+    let target_width = (logical_width * scale).round().max(1.0) as u32;
+    let target_height = (logical_height * scale).round().max(1.0) as u32;
+
+    let mut side = state
+        .side
+        .lock()
+        .map(|value| value.clone())
+        .unwrap_or_else(|_| "right".into());
+    if let Ok(Some(monitor)) = window.current_monitor() {
+        let area = monitor.work_area();
+        let center = current.x as i64 + current.width as i64 / 2;
+        let monitor_center = area.position.x as i64 + area.size.width as i64 / 2;
+        side = if center <= monitor_center {
+            "left"
+        } else {
+            "right"
+        }
+        .into();
+    }
+    if let Ok(mut value) = state.side.lock() {
+        *value = side.clone();
+    }
+
+    let mut target = if presentation == "window" && previous_presentation == "edge-handle" {
+        FloatingNativeBounds {
+            x: if side == "left" {
+                current.x
+            } else {
+                current.x + current.width as i32 - target_width as i32
+            },
+            // 普通窗口可按顶部或中心锚定；瞬时预览始终传入中心锚点，确保
+            // 摘要卡不会单向向下弹出，同时把手仍位于原来的鼠标命中区域。
+            y: if anchor_top {
+                current.y
+            } else {
+                current.y + (current.height as i32 - target_height as i32) / 2
+            },
+            width: target_width,
+            height: target_height,
+        }
+    } else {
+        FloatingNativeBounds {
+            x: if side == "right" {
+                current.x + current.width as i32 - target_width as i32
+            } else {
+                current.x
+            },
+            y: current.y,
+            width: target_width,
+            height: target_height,
+        }
+    };
+
+    if presentation == "edge-handle" {
+        if let Ok(Some(monitor)) = window.current_monitor() {
+            let area = monitor.work_area();
+            target.x = if side == "left" {
+                area.position.x
+            } else {
+                area.position.x + area.size.width as i32 - target_width as i32
+            };
+            target.y = if anchor_top {
+                current.y
+            } else {
+                current.y + (current.height as i32 - target_height as i32) / 2
+            };
+        }
+    }
+    target = clamp_floating_bounds_to_monitor(&window, target);
+
+    let resolved_radius = if transient_peek {
+        22.0
+    } else if presentation == "edge-handle" {
+        14.0
+    } else if mode == "capsule" {
+        28.0
+    } else {
+        radius.clamp(20.0, 24.0)
+    };
+    if let Ok(mut value) = state.radius.lock() {
+        *value = resolved_radius;
+    }
+    // hover 预览只是贴边把手的瞬时可视区域，不是第四种窗口形态，也不能
+    // 把运行时 presentation 改成 window。否则完成事件稍有竞态，未点击的
+    // 把手就会永久变为胶囊。
+    if !transient_peek {
+        if let Ok(mut value) = state.mode.lock() {
+            *value = mode.clone();
+        }
+        if let Ok(mut value) = state.presentation.lock() {
+            *value = presentation.clone();
+        }
+    }
+    // 贴边把手及其临时预览必须始终处于所有应用之上；展开为普通悬浮窗后
+    // 再恢复用户自己的“窗口置顶”偏好。
+    let effective_always_on_top =
+        presentation == "edge-handle" || transient_peek || anchor_top || always_on_top;
+    window
+        .set_always_on_top(effective_always_on_top)
+        .map_err(|error| error.to_string())?;
+    state
+        .always_on_top
+        .store(effective_always_on_top, Ordering::SeqCst);
+    // 过渡期间先解除旧模式最小尺寸，防止 Windows 把缩小动画强制弹回。
+    window
+        .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+            28.0, 46.0,
+        ))))
+        .map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    {
+        // 动画全程保留单一原生裁切。区域一次性覆盖起点和终点的最大边界，
+        // 不再清空 HRGN 暴露矩形窗口，也不逐帧重建造成 WebView2 双提交频闪。
+        apply_floating_rounded_region_for_size(
+            &window,
+            current.width.max(target.width),
+            current.height.max(target.height),
+            resolved_radius,
+            false,
+        )?;
+    }
+
+    let app_copy = app.clone();
+    std::thread::spawn(move || {
+        // 使用真实时间而不是“固定帧数 + 每帧固定 sleep”。把手悬停预览使用
+        // 220ms的小幅形变，恢复普通窗口使用260ms，其余切换使用220ms；慢帧直接追到当前时间，
+        // 不补播过期帧。中间帧只提交窗口边界，终点再一次性精确应用原生圆角。
+        let started_at = Instant::now();
+        let expanding_from_handle =
+            previous_presentation == "edge-handle" && presentation == "window" && !anchor_top;
+        let duration = Duration::from_millis(if transient_peek {
+            220
+        } else if expanding_from_handle {
+            260
+        } else {
+            220
+        });
+        let frame_interval = Duration::from_micros(16_667);
+        let mut next_frame_at = started_at;
+        // 动画接近终点时提前应用目标圆角，避免"全程直角、终点瞬间变圆角"的跳变。
+        let mut early_region_applied = false;
+        loop {
+            let runtime = app_copy.state::<FloatingWindowRuntime>();
+            if runtime.transition_revision.load(Ordering::SeqCst) != transition_id {
+                return;
+            }
+            let elapsed = started_at.elapsed();
+            let linear = if animate {
+                (elapsed.as_secs_f64() / duration.as_secs_f64()).min(1.0)
+            } else {
+                1.0
+            };
+            let progress = if transient_peek {
+                floating_smootherstep(linear)
+            } else {
+                floating_ease_out_cubic(linear)
+            };
+            let lerp_i32 =
+                |from: i32, to: i32| (from as f64 + (to - from) as f64 * progress).round() as i32;
+            let lerp_u32 = |from: u32, to: u32| {
+                (from as f64 + (to as f64 - from as f64) * progress)
+                    .round()
+                    .max(1.0) as u32
+            };
+            let next = FloatingNativeBounds {
+                x: lerp_i32(current.x, target.x),
+                y: lerp_i32(current.y, target.y),
+                width: lerp_u32(current.width, target.width),
+                height: lerp_u32(current.height, target.height),
+            };
+            if set_floating_physical_bounds(&window, next).is_err() {
+                break;
+            }
+            if !early_region_applied && linear >= 0.9 {
+                #[cfg(windows)]
+                let _ = apply_floating_rounded_region_for_size(
+                    &window,
+                    target.width,
+                    target.height,
+                    resolved_radius,
+                    false,
+                );
+                early_region_applied = true;
+            }
+            if linear >= 1.0 {
+                break;
+            }
+            next_frame_at += frame_interval;
+            let now = Instant::now();
+            if next_frame_at > now {
+                std::thread::sleep(next_frame_at.duration_since(now));
+            } else {
+                // 当前帧过慢时直接追到下一个未来采样点，避免补播旧帧造成卡顿。
+                next_frame_at = now + frame_interval;
+            }
+        }
+
+        let runtime = app_copy.state::<FloatingWindowRuntime>();
+        if runtime.transition_revision.load(Ordering::SeqCst) != transition_id {
+            return;
+        }
+        let _ = set_floating_physical_bounds(&window, target);
+        let minimum = if presentation == "edge-handle" || transient_peek {
+            (28.0, 46.0)
+        } else {
+            floating_mode_minimum(&mode)
+        };
+        let _ = window.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+            minimum.0, minimum.1,
+        ))));
+        #[cfg(windows)]
+        let _ = apply_floating_rounded_region(&window, resolved_radius);
+        let _ = window.set_decorations(false);
+        #[cfg(windows)]
+        let _ = enforce_floating_borderless(&window);
+        if presentation == "window" && !transient_peek {
+            if let Ok(mut stored) = runtime.expanded_bounds.lock() {
+                *stored = Some(target);
+            }
+        }
+        // 最终提交前再次确认本次过渡仍是当前最新请求。旧过渡被 cancel 后
+        // 绝不允许发出 complete 事件——否则前端会在新过渡进行中收到旧
+        // 形态的完成通知，提交旧 DOM、复位过渡状态并持久化旧配置，形成
+        // “切换中旧内容再次淡入”的频闪。
+        if runtime.transition_revision.load(Ordering::SeqCst) != transition_id {
+            return;
+        }
+        // 兜底：动画全程由 SetWindowPos 驱动，个别 Windows/WebView2 组合可能
+        // 在缩放过程中意外清除 WS_VISIBLE（窗口从屏幕消失）。提交前强制保持
+        // 可见，不激活、不移动、不改变 Z 序。
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
+            };
+            if let Ok(hwnd) = window.hwnd() {
+                unsafe {
+                    SetWindowPos(
+                        hwnd.0 as windows_sys::Win32::Foundation::HWND,
+                        std::ptr::null_mut(),
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_SHOWWINDOW,
+                    );
+                }
+            }
+        }
+        runtime.transition_active.store(false, Ordering::SeqCst);
+        app_copy
+            .emit(
+                "floating-window-transition-complete",
+                serde_json::json!({
+                    "transitionId": transition_id,
+                    "mode": mode,
+                    "presentation": if transient_peek { "edge-handle" } else { presentation.as_str() },
+                    "transientPeek": transient_peek,
+                    "side": side,
+                    "bounds": target,
+                }),
+            )
+            .ok();
+    });
+
+    Ok(transition_id)
+}
+
+#[tauri::command]
+fn animate_floating_window_transition(
+    mode: String,
+    presentation: String,
+    width: f64,
+    height: f64,
+    radius: f64,
+    always_on_top: bool,
+    animate: bool,
+    app: AppHandle,
+) -> Result<u64, String> {
+    start_floating_window_transition(
+        app,
+        mode,
+        presentation,
+        width,
+        height,
+        radius,
+        always_on_top,
+        animate,
+        false,
+        false,
+    )
+}
+
+#[tauri::command]
+fn cancel_floating_window_transition(
+    app: AppHandle,
+    state: State<'_, FloatingWindowRuntime>,
+) -> Result<(), String> {
+    state.transition_revision.fetch_add(1, Ordering::SeqCst);
+    state.transition_active.store(false, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window("floating") {
+        let mode = state
+            .mode
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_else(|_| "compact".into());
+        let presentation = state
+            .presentation
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_else(|_| "window".into());
+        let minimum = if presentation == "edge-handle" {
+            (28.0, 46.0)
+        } else {
+            floating_mode_minimum(&mode)
+        };
+        window
+            .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
+                minimum.0, minimum.1,
+            ))))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_floating_window_state(
+    app: AppHandle,
+    state: State<'_, FloatingWindowRuntime>,
+) -> Result<FloatingWindowStateView, String> {
+    Ok(FloatingWindowStateView {
+        transition_id: state.transition_revision.load(Ordering::SeqCst),
+        transitioning: state.transition_active.load(Ordering::SeqCst),
+        presentation: state
+            .presentation
+            .lock()
+            .map(|value| value.clone())
+            .map_err(|_| "悬浮窗展示状态锁定失败")?,
+        mode: state
+            .mode
+            .lock()
+            .map(|value| value.clone())
+            .map_err(|_| "悬浮窗模式状态锁定失败")?,
+        side: state
+            .side
+            .lock()
+            .map(|value| value.clone())
+            .map_err(|_| "悬浮窗贴边状态锁定失败")?,
+        bounds: app
+            .get_webview_window("floating")
+            .and_then(|window| floating_current_bounds(&window).ok()),
+        always_on_top: state.always_on_top.load(Ordering::SeqCst),
+    })
+}
+
+#[tauri::command]
+fn collapse_floating_to_handle(
+    mode: String,
+    always_on_top: bool,
+    animate: bool,
+    app: AppHandle,
+) -> Result<u64, String> {
+    start_floating_window_transition(
+        app,
+        mode,
+        "edge-handle".into(),
+        28.0,
+        46.0,
+        14.0,
+        always_on_top,
+        animate,
+        false,
+        false,
+    )
+}
+
+#[tauri::command]
+fn expand_floating_from_handle(
+    mode: String,
+    width: f64,
+    height: f64,
+    always_on_top: bool,
+    animate: bool,
+    app: AppHandle,
+) -> Result<u64, String> {
+    let radius = if mode == "capsule" { 28.0 } else { 24.0 };
+    start_floating_window_transition(
+        app,
+        mode,
+        "window".into(),
+        width,
+        height,
+        radius,
+        always_on_top,
+        animate,
+        false,
+        false,
+    )
+}
+
+#[tauri::command]
+fn peek_floating_handle(
+    mode: String,
+    width: f64,
+    height: f64,
+    always_on_top: bool,
+    app: AppHandle,
+) -> Result<u64, String> {
+    let radius = if mode == "capsule" { 28.0 } else { 24.0 };
+    start_floating_window_transition(
+        app,
+        mode,
+        "window".into(),
+        width,
+        height,
+        radius,
+        always_on_top,
+        true,
+        false,
+        true,
+    )
+}
+
+#[tauri::command]
+fn restore_floating_handle(
+    mode: String,
+    always_on_top: bool,
+    app: AppHandle,
+) -> Result<u64, String> {
+    start_floating_window_transition(
+        app,
+        mode,
+        "edge-handle".into(),
+        28.0,
+        46.0,
+        14.0,
+        always_on_top,
+        true,
+        false,
+        false,
+    )
+}
+
+#[tauri::command]
+fn move_floating_handle(x: i32, y: i32, app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("floating")
+        .ok_or_else(|| "悬浮窗尚未创建".to_string())?;
+    let current = floating_current_bounds(&window)?;
+    let next = clamp_floating_bounds_to_monitor(&window, FloatingNativeBounds { x, y, ..current });
+    window
+        .set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+            next.x, next.y,
+        )))
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn set_floating_window_mode(
     mode: String,
@@ -1847,57 +2887,20 @@ fn set_floating_window_mode(
     app: AppHandle,
     state: State<'_, FloatingWindowRuntime>,
 ) -> Result<(), String> {
-    if !matches!(mode.as_str(), "capsule" | "compact" | "full") {
-        return Err("不支持的悬浮窗形态".into());
-    }
-    let resolved_radius = if mode == "capsule" {
-        // v0.8.5 的折叠形态是 360×152 的圆角窗口，不是全高药丸形裁切。
-        28.0
-    } else {
-        // v0.8.5 经典展开窗统一使用 24px 圆角，避免 DPI 下 CSS 与原生裁切不一致。
-        radius.clamp(20.0, 24.0)
-    };
-    *state.radius.lock().map_err(|_| "悬浮圆角状态锁定失败")? = resolved_radius;
     *state.snap_to_edges.lock().map_err(|_| "贴边状态锁定失败")? = snap_to_edges;
-    if let Some(window) = app.get_webview_window("floating") {
-        let (minimum_width, minimum_height) = match mode.as_str() {
-            "capsule" => (360.0, 152.0),
-            "full" => (500.0, 520.0),
-            _ => (400.0, 300.0),
-        };
-        window
-            .set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize::new(
-                minimum_width,
-                minimum_height,
-            ))))
-            .map_err(|error| error.to_string())?;
-        // 形态和物理窗口尺寸由同一个主进程命令原子更新，避免只缩小 Vue 内容、
-        // 却留下旧窗口透明矩形区域所形成的黑框或空白方框。
-        if let (Some(width), Some(height)) = (width, height) {
-            window
-                .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                    width.clamp(minimum_width, 960.0),
-                    height.clamp(minimum_height, 1000.0),
-                )))
-                .map_err(|error| error.to_string())?;
-        }
-        window
-            .set_always_on_top(always_on_top)
-            .map_err(|error| error.to_string())?;
-        #[cfg(windows)]
-        apply_floating_rounded_region(&window, resolved_radius)?;
-    }
-    app.emit(
-        "floating-window-mode-applied",
-        serde_json::json!({
-            "mode": mode,
-            "width": width,
-            "height": height,
-            "radius": resolved_radius,
-            "alwaysOnTop": always_on_top,
-        }),
-    )
-    .ok();
+    let (minimum_width, minimum_height) = floating_mode_minimum(&mode);
+    start_floating_window_transition(
+        app,
+        mode,
+        "window".into(),
+        width.unwrap_or(minimum_width),
+        height.unwrap_or(minimum_height),
+        radius,
+        always_on_top,
+        false,
+        false,
+        false,
+    )?;
     Ok(())
 }
 
@@ -1910,6 +2913,122 @@ fn get_floating_render_status(
         .lock()
         .map(|status| status.clone())
         .map_err(|_| "悬浮渲染状态锁定失败".into())
+}
+
+#[cfg(windows)]
+struct FloatingHotkeyHandle {
+    thread: Option<std::thread::JoinHandle<()>>,
+    thread_id: u32,
+}
+
+#[cfg(windows)]
+static FLOATING_HOTKEY: Mutex<Option<FloatingHotkeyHandle>> = Mutex::new(None);
+
+/// 全局快捷键线程：注册 RegisterHotKey 后进入消息循环，WM_HOTKEY 时通知前端切换悬浮窗。
+/// 不使用独立进程或托盘，符合“悬浮窗是主程序内置功能”的约束。
+#[cfg(windows)]
+fn floating_hotkey_thread(
+    app: tauri::AppHandle,
+    modifiers: u32,
+    vk: u32,
+) -> (std::thread::JoinHandle<()>, std::sync::mpsc::Receiver<u32>) {
+    use std::sync::mpsc;
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, MOD_NOREPEAT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, TranslateMessage, MSG, WM_HOTKEY,
+    };
+    let (tx, rx) = mpsc::channel::<u32>();
+    let thread = std::thread::spawn(move || {
+        let thread_id = unsafe { GetCurrentThreadId() };
+        let _ = tx.send(thread_id);
+        const HOTKEY_ID: i32 = 0xB01D;
+        let ok = unsafe {
+            RegisterHotKey(
+                std::ptr::null_mut(),
+                HOTKEY_ID,
+                modifiers | MOD_NOREPEAT,
+                vk,
+            )
+        };
+        if ok == 0 {
+            let _ = app.emit(
+                "floating-hotkey-error",
+                "全局快捷键注册失败：可能已被其他程序占用",
+            );
+            return;
+        }
+        let mut message = MSG {
+            hwnd: std::ptr::null_mut(),
+            message: 0,
+            wParam: 0,
+            lParam: 0,
+            time: 0,
+            pt: POINT { x: 0, y: 0 },
+        };
+        loop {
+            let result = unsafe { GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) };
+            if result <= 0 {
+                break;
+            }
+            if message.message == WM_HOTKEY {
+                let _ = app.emit("floating-hotkey", ());
+            } else {
+                unsafe {
+                    TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+            }
+        }
+    });
+    (thread, rx)
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn set_floating_hotkey(
+    enabled: bool,
+    modifiers: u32,
+    vk: u32,
+    app: AppHandle,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW;
+    let mut slot = FLOATING_HOTKEY.lock().map_err(|_| "快捷键状态锁定失败")?;
+    if let Some(handle) = slot.take() {
+        unsafe {
+            PostThreadMessageW(handle.thread_id, 0x0012 /* WM_QUIT */, 0, 0)
+        };
+        if let Some(thread) = handle.thread {
+            let _ = thread.join();
+        }
+    }
+    if !enabled {
+        return Ok(());
+    }
+    if vk == 0 {
+        return Err("快捷键键值无效".into());
+    }
+    let (thread, rx) = floating_hotkey_thread(app, modifiers, vk);
+    let thread_id = rx
+        .recv_timeout(Duration::from_secs(3))
+        .map_err(|_| "快捷键线程启动超时".to_string())?;
+    slot.replace(FloatingHotkeyHandle {
+        thread: Some(thread),
+        thread_id,
+    });
+    Ok(())
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn set_floating_hotkey(
+    _enabled: bool,
+    _modifiers: u32,
+    _vk: u32,
+    _app: AppHandle,
+) -> Result<(), String> {
+    Err("全局快捷键仅支持 Windows".into())
 }
 
 /// 智能穿透由主进程内的轻量轮询器实现，不创建后台服务或第二个进程。
@@ -2000,6 +3119,7 @@ fn show_floating(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     #[cfg(windows)]
     {
+        enforce_floating_borderless(&window)?;
         let radius = app
             .state::<FloatingWindowRuntime>()
             .radius
@@ -2034,24 +3154,56 @@ fn set_floating_window(
     }
 }
 #[tauri::command]
-fn send_budget_alert(level: u8, remaining: u8, app: AppHandle) -> Result<(), String> {
-    let title = if level <= 10 {
+fn send_budget_alert(
+    level: u8,
+    remaining: u8,
+    kind: Option<String>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let is_monthly = kind.as_deref() == Some("monthly");
+    let title = if is_monthly {
+        if level <= 10 {
+            "Token Manager · 本月预算预估严重超支"
+        } else {
+            "Token Manager · 本月预算预估提醒"
+        }
+    } else if level <= 10 {
         "Token Manager · 预算余额严重不足"
     } else {
         "Token Manager · 预算余额提醒"
     };
+    let body = if is_monthly {
+        format!(
+            "本月预算预估已使用约 {}%（本地估算，按当前速度推算至月底）。",
+            100 - remaining.min(100) as i32
+        )
+    } else {
+        format!("Codex 个人预算余额约 {remaining}%，请合理安排后续任务。 ")
+    };
     app.notification()
         .builder()
         .title(title)
-        .body(format!(
-            "Codex 个人预算余额约 {remaining}%，请合理安排后续任务。 "
-        ))
+        .body(body)
         .show()
         .map_err(|e| e.to_string())
 }
 #[tauri::command]
 fn providers() -> Vec<AdapterCapability> {
-    let ids = [
+    provider_registry_ids()
+        .iter()
+        .map(|id| {
+            RegistryAdapter {
+                id: *id,
+                billing: *id == "DeepSeek",
+            }
+            .capability()
+        })
+        .collect()
+}
+
+/// 平台注册表（单一事实来源）：providers() 与 balance_capabilities() 共用。
+fn provider_registry_ids() -> &'static [&'static str] {
+    &[
         "腾讯混元",
         "豆包（火山方舟）",
         "文心千帆",
@@ -2071,14 +3223,42 @@ fn providers() -> Vec<AdapterCapability> {
         "Anthropic",
         "Google Gemini",
         "自定义 OpenAI 兼容",
-    ];
-    ids.into_iter()
+    ]
+}
+
+#[derive(Debug, Serialize)]
+struct BalanceCapability {
+    provider: String,
+    official_api: bool,
+    detail: String,
+}
+
+/// 官方余额能力清单：与平台注册表同源，明确标注哪些平台有公开可授权的官方余额接口，
+/// 其余平台只显示本地估算——列出来不等于有官方接口。
+#[tauri::command]
+fn balance_capabilities() -> Vec<BalanceCapability> {
+    provider_registry_ids()
+        .iter()
         .map(|id| {
-            RegistryAdapter {
-                id,
-                billing: id == "DeepSeek",
+            if *id == "DeepSeek" {
+                BalanceCapability {
+                    provider: id.to_string(),
+                    official_api: true,
+                    detail: "官方 /user/balance 接口（账户密钥授权）".into(),
+                }
+            } else if *id == "OpenCode Go" {
+                BalanceCapability {
+                    provider: id.to_string(),
+                    official_api: false,
+                    detail: "本地日志观察，无官方余额接口".into(),
+                }
+            } else {
+                BalanceCapability {
+                    provider: id.to_string(),
+                    official_api: false,
+                    detail: "无公开的按 API Key 余额接口；余额卡片显示本地估算".into(),
+                }
             }
-            .capability()
         })
         .collect()
 }
@@ -2205,6 +3385,29 @@ fn write_user_environment(name: &str, value: Option<&str>) -> Result<(), String>
 #[cfg(not(windows))]
 fn write_user_environment(_name: &str, _value: Option<&str>) -> Result<(), String> {
     Err("自动接入当前仅支持 Windows".into())
+}
+
+#[cfg(windows)]
+fn ensure_windows_autostart_entry() -> Result<(), String> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+
+    let executable =
+        std::env::current_exe().map_err(|error| format!("无法定位 Token Manager 程序：{error}"))?;
+    // Windows 的 Run 项必须给带空格的完整路径加引号，否则系统可能把
+    // `...\\Token Manager\\token-manager.exe` 误解析为 `...\\Token.exe`。
+    let command = format!("\"{}\"", executable.display());
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (run_key, _) = hkcu
+        .create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+        .map_err(|error| format!("无法打开当前用户启动项：{error}"))?;
+    run_key
+        .set_value("Token Manager", &command)
+        .map_err(|error| format!("无法写入 Token Manager 开机启动项：{error}"))
+}
+
+#[cfg(not(windows))]
+fn ensure_windows_autostart_entry() -> Result<(), String> {
+    Ok(())
 }
 
 fn client_integration_backup_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -2424,11 +3627,9 @@ fn patch_deepseek_harness_base_url(source: &str, local_url: &str) -> String {
                 .then_some(index)
             })
             .unwrap_or(lines.len());
-        if let Some(index) = (start + 1..end).find(|index| {
-            lines[*index]
-                .trim_start()
-                .starts_with("baseURL:")
-        }) {
+        if let Some(index) =
+            (start + 1..end).find(|index| lines[*index].trim_start().starts_with("baseURL:"))
+        {
             lines[index] = replacement;
         } else {
             lines.insert(start + 1, replacement);
@@ -2455,7 +3656,8 @@ fn connect_deepseek_harness_blocking(
     }
     let settings_path = deepseek_harness_settings_path()?;
     if let Some(parent) = settings_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("无法创建 DeepSeek Harness 配置目录：{error}"))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("无法创建 DeepSeek Harness 配置目录：{error}"))?;
     }
     let backup_path = client_integration_backup_path(&app)?;
     let mut backup = if backup_path.exists() {
@@ -2478,8 +3680,7 @@ fn connect_deepseek_harness_blocking(
         }
     };
     if backup.deepseek_harness_settings_path.is_none() {
-        backup.deepseek_harness_settings_path =
-            Some(settings_path.to_string_lossy().into_owned());
+        backup.deepseek_harness_settings_path = Some(settings_path.to_string_lossy().into_owned());
         backup.deepseek_harness_settings_original = fs::read_to_string(&settings_path).ok();
         backup.deepseek_harness_settings_existed = settings_path.exists();
         fs::write(
@@ -2628,14 +3829,11 @@ fn backup_key(password: &str, salt: &[u8]) -> [u8; 32] {
     key
 }
 
-fn build_backup_envelope(
-    password: &str,
+/// 构建备份数据本体（账户/用量/余额/预算/界面设置），密码加密与本机 DPAPI 加密共用。
+fn build_backup_bundle(
     ui_state: serde_json::Value,
     state: &State<AppDb>,
-) -> Result<BackupEnvelope, String> {
-    if password.chars().count() < 8 {
-        return Err("迁移密码至少需要 8 个字符".into());
-    }
+) -> Result<BackupBundle, String> {
     let db = state.0.lock().map_err(|_| "数据库锁定")?;
     let mut account_query=db.prepare("SELECT id,provider,name,base_url,secret_cipher,created_at FROM account_configs ORDER BY created_at").map_err(|e|e.to_string())?;
     let accounts = account_query
@@ -2726,6 +3924,18 @@ fn build_backup_envelope(
         seven_day_limit: budget.seven_day_limit,
         ui_state,
     };
+    Ok(bundle)
+}
+
+fn build_backup_envelope(
+    password: &str,
+    ui_state: serde_json::Value,
+    state: &State<AppDb>,
+) -> Result<BackupEnvelope, String> {
+    if password.chars().count() < 8 {
+        return Err("迁移密码至少需要 8 个字符".into());
+    }
+    let bundle = build_backup_bundle(ui_state, state)?;
     let plaintext = serde_json::to_vec(&bundle).map_err(|e| e.to_string())?;
     let mut salt = [0u8; 16];
     let mut nonce = [0u8; 12];
@@ -2738,6 +3948,7 @@ fn build_backup_envelope(
         .map_err(|_| "无法加密迁移包")?;
     Ok(BackupEnvelope {
         version: 1,
+        local: false,
         salt: BASE64.encode(salt),
         nonce: BASE64.encode(nonce),
         ciphertext: BASE64.encode(ciphertext),
@@ -2766,6 +3977,14 @@ fn restore_backup_envelope(
         .map_err(|_| "迁移密码错误或迁移包已损坏")?;
     let bundle: BackupBundle =
         serde_json::from_slice(&plaintext).map_err(|_| "迁移数据无法解析")?;
+    restore_backup_bundle(bundle, state)
+}
+
+/// 把备份数据本体写回数据库（覆盖式恢复，事务内完成）。
+fn restore_backup_bundle(
+    bundle: BackupBundle,
+    state: &State<AppDb>,
+) -> Result<serde_json::Value, String> {
     let mut db = state.0.lock().map_err(|_| "数据库锁定")?;
     let tx = db.transaction().map_err(|e| e.to_string())?;
     tx.execute_batch("DELETE FROM account_configs;DELETE FROM usage_events;DELETE FROM account_balances;DELETE FROM balance_history;").map_err(|e|e.to_string())?;
@@ -2831,6 +4050,128 @@ fn import_encrypted_backup(
     restore_backup_envelope(envelope, &password, &state)
 }
 
+/// 当前 Windows 账户作用域的 DPAPI 保护（免密码，仅同账户同机器可解）。
+#[cfg(windows)]
+fn dpapi_protect(plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{
+        CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: plaintext.len() as u32,
+        pbData: plaintext.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+    let ok = unsafe {
+        CryptProtectData(
+            &input,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut output,
+        )
+    };
+    if ok == 0 {
+        return Err("Windows 数据保护（DPAPI）加密失败".into());
+    }
+    let bytes =
+        unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) }.to_vec();
+    unsafe { LocalFree(output.pbData as _) };
+    Ok(bytes)
+}
+
+#[cfg(not(windows))]
+fn dpapi_protect(_plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    Err("本机备份仅支持 Windows".into())
+}
+
+#[cfg(windows)]
+fn dpapi_unprotect(protected: &[u8]) -> Result<Vec<u8>, String> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{
+        CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: protected.len() as u32,
+        pbData: protected.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+    let ok = unsafe {
+        CryptUnprotectData(
+            &input,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut output,
+        )
+    };
+    if ok == 0 {
+        return Err("本机备份只能由导出它的同一 Windows 账户恢复（DPAPI 解密失败）".into());
+    }
+    let bytes =
+        unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) }.to_vec();
+    unsafe { LocalFree(output.pbData as _) };
+    Ok(bytes)
+}
+
+#[cfg(not(windows))]
+fn dpapi_unprotect(_protected: &[u8]) -> Result<Vec<u8>, String> {
+    Err("本机备份仅支持 Windows".into())
+}
+
+/// 本机备份：与加密迁移包同一数据信封，但改用当前 Windows 账户的 DPAPI 保护，
+/// 免密码；只能在导出备份的同一 Windows 账户与机器上恢复，适合本地灾备。
+#[tauri::command]
+fn export_local_backup(
+    path: String,
+    ui_state: serde_json::Value,
+    state: State<AppDb>,
+) -> Result<(), String> {
+    let bundle = build_backup_bundle(ui_state, &state)?;
+    let plaintext = serde_json::to_vec(&bundle).map_err(|e| e.to_string())?;
+    let protected = dpapi_protect(&plaintext)?;
+    let envelope = BackupEnvelope {
+        version: 2,
+        local: true,
+        salt: String::new(),
+        nonce: String::new(),
+        ciphertext: BASE64.encode(protected),
+    };
+    fs::write(
+        path,
+        serde_json::to_vec(&envelope).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn import_local_backup(path: String, state: State<AppDb>) -> Result<serde_json::Value, String> {
+    let envelope: BackupEnvelope =
+        serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+            .map_err(|_| "备份包格式无效")?;
+    if !envelope.local {
+        return Err("这是加密迁移包，请使用「导入迁移包」并输入迁移密码".into());
+    }
+    let protected = BASE64
+        .decode(envelope.ciphertext)
+        .map_err(|_| "备份包密文无效")?;
+    let plaintext = dpapi_unprotect(&protected)?;
+    let bundle: BackupBundle =
+        serde_json::from_slice(&plaintext).map_err(|_| "本机备份数据无法解析")?;
+    restore_backup_bundle(bundle, &state)
+}
+
 fn validate_cloud_base(value: &str) -> Result<String, String> {
     let base = value.trim().trim_end_matches('/');
     if base.starts_with("https://")
@@ -2870,11 +4211,19 @@ fn install_identity(_state: &State<'_, AppDb>) -> Result<String, String> {
 #[cfg(not(windows))]
 fn install_identity(state: &State<'_, AppDb>) -> Result<String, String> {
     let db = state.0.lock().map_err(|_| "数据库锁定")?;
-    if let Ok(value) = db.query_row("SELECT install_id FROM app_identity WHERE id=1", [], |row| row.get::<_, String>(0)) {
+    if let Ok(value) = db.query_row(
+        "SELECT install_id FROM app_identity WHERE id=1",
+        [],
+        |row| row.get::<_, String>(0),
+    ) {
         return Ok(value);
     }
     let value = new_install_identity();
-    db.execute("INSERT OR REPLACE INTO app_identity(id,install_id,created_at) VALUES(1,?1,?2)", params![value, Utc::now().to_rfc3339()]).map_err(|error| error.to_string())?;
+    db.execute(
+        "INSERT OR REPLACE INTO app_identity(id,install_id,created_at) VALUES(1,?1,?2)",
+        params![value, Utc::now().to_rfc3339()],
+    )
+    .map_err(|error| error.to_string())?;
     Ok(value)
 }
 fn save_cloud_auth(
@@ -3174,8 +4523,13 @@ async fn cloud_app_presence(
         .await
         .map_err(|e| format!("匿名使用统计暂不可用：{e}"))?;
     let status = response.status();
-    if !status.is_success() { return Err(format!("匿名使用统计返回 {status}")); }
-    response.json::<PresenceAckV2>().await.map_err(|error| format!("匿名使用统计回包无效：{error}"))
+    if !status.is_success() {
+        return Err(format!("匿名使用统计返回 {status}"));
+    }
+    response
+        .json::<PresenceAckV2>()
+        .await
+        .map_err(|error| format!("匿名使用统计回包无效：{error}"))
 }
 #[tauri::command]
 fn save_usage(event: UsageEvent, state: State<AppDb>) -> Result<(), String> {
@@ -3210,6 +4564,203 @@ fn list_usage(days: i64, state: State<AppDb>) -> Result<Vec<UsageEvent>, String>
                 cached: r.get::<_, i64>(6)?.max(0) as u64,
                 cost: r.get(7)?,
                 task: r.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Serialize)]
+struct MonthlyUsageEstimate {
+    month: String,
+    days_elapsed: u64,
+    days_in_month: u64,
+    month_tokens: u64,
+    month_cost: f64,
+    avg_daily_tokens: u64,
+    avg_daily_cost: f64,
+    projected_month_tokens: u64,
+    projected_month_cost: f64,
+    last30d_tokens: u64,
+    last30d_cost: f64,
+}
+
+/// 基于本地真实用量事件的本月消耗估算：按已过自然日把本月用量线性外推到月底。
+/// 明确为估算值（非官方账单），仅用于预算预警。
+#[tauri::command]
+fn monthly_usage_estimate(state: State<AppDb>) -> Result<MonthlyUsageEstimate, String> {
+    use chrono::{Datelike, Months, Timelike};
+    let now = Utc::now();
+    let month_start = now
+        .with_day(1)
+        .and_then(|value| value.with_hour(0))
+        .and_then(|value| value.with_minute(0))
+        .and_then(|value| value.with_second(0))
+        .and_then(|value| value.with_nanosecond(0))
+        .unwrap_or(now);
+    let next_month = month_start
+        .checked_add_months(Months::new(1))
+        .unwrap_or(now);
+    let days_in_month = ((next_month - month_start).num_days()).max(1) as u64;
+    let days_elapsed = ((now - month_start).num_days() + 1).max(1) as u64;
+    let month_start_str = month_start.to_rfc3339();
+    let last30_start = (now - chrono::Duration::days(30)).to_rfc3339();
+    let db = state.0.lock().map_err(|_| "数据库锁定")?;
+    let month_totals = db
+        .query_row(
+            "SELECT COALESCE(SUM(input_tokens+output_tokens+cached_tokens),0),COALESCE(SUM(cost),0) FROM usage_events WHERE at>=?1 AND is_shadowed=0",
+            [&month_start_str],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let last30_totals = db
+        .query_row(
+            "SELECT COALESCE(SUM(input_tokens+output_tokens+cached_tokens),0),COALESCE(SUM(cost),0) FROM usage_events WHERE at>=?1 AND is_shadowed=0",
+            [&last30_start],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let (month_tokens, month_cost) = month_totals;
+    let (last30_tokens, last30_cost) = last30_totals;
+    let avg_daily_tokens = (month_tokens as f64 / days_elapsed as f64) as u64;
+    let avg_daily_cost = month_cost / days_elapsed as f64;
+    Ok(MonthlyUsageEstimate {
+        month: format!("{}-{:02}", now.year(), now.month()),
+        days_elapsed,
+        days_in_month,
+        month_tokens: month_tokens.max(0) as u64,
+        month_cost,
+        avg_daily_tokens,
+        avg_daily_cost,
+        projected_month_tokens: (avg_daily_tokens as f64 * days_in_month as f64) as u64,
+        projected_month_cost: avg_daily_cost * days_in_month as f64,
+        last30d_tokens: last30_tokens.max(0) as u64,
+        last30d_cost: last30_cost,
+    })
+}
+
+#[derive(Debug, Serialize)]
+struct PromptUsageStats {
+    calls: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    cost: f64,
+    first_at: Option<String>,
+    last_at: Option<String>,
+}
+
+/// 按 Prompt 指纹（首条用户消息 SHA-256）聚合本地用量；指纹不可逆，查询不到正文。
+#[tauri::command]
+fn prompt_usage_stats(
+    hash: String,
+    days: i64,
+    state: State<AppDb>,
+) -> Result<PromptUsageStats, String> {
+    if hash.len() != 64 || !hash.chars().all(|value| value.is_ascii_hexdigit()) {
+        return Err("Prompt 指纹无效".into());
+    }
+    let since = (Utc::now() - chrono::Duration::days(days.clamp(1, 365))).to_rfc3339();
+    let db = state.0.lock().map_err(|_| "数据库锁定")?;
+    db.query_row(
+        "SELECT COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cost),0),MIN(at),MAX(at) FROM usage_events WHERE prompt_hash=?1 AND is_shadowed=0 AND at>=?2",
+        params![hash, since],
+        |row| {
+            Ok(PromptUsageStats {
+                calls: row.get::<_, i64>(0)?.max(0) as u64,
+                input_tokens: row.get::<_, i64>(1)?.max(0) as u64,
+                output_tokens: row.get::<_, i64>(2)?.max(0) as u64,
+                cost: row.get(3)?,
+                first_at: row.get(4)?,
+                last_at: row.get(5)?,
+            })
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Serialize)]
+struct SessionUsageRow {
+    session_key: String,
+    project_key: Option<String>,
+    provider: String,
+    calls: u64,
+    tokens: u64,
+    cost: f64,
+    first_at: String,
+    last_at: String,
+}
+
+/// 会话维度聚合：仅数据源明确提供会话标识的记录（DSH/Claude/OpenCode 等）参与分组。
+#[tauri::command]
+fn session_usage_summary(days: i64, state: State<AppDb>) -> Result<Vec<SessionUsageRow>, String> {
+    let since = (Utc::now() - chrono::Duration::days(days.clamp(1, 365))).to_rfc3339();
+    let db = state.0.lock().map_err(|_| "数据库锁定")?;
+    let mut statement = db
+        .prepare(
+            "SELECT session_key,MAX(project_key),MAX(provider),COUNT(*),COALESCE(SUM(input_tokens+output_tokens+cached_tokens),0),COALESCE(SUM(cost),0),MIN(at),MAX(at) FROM usage_events WHERE session_key IS NOT NULL AND is_shadowed=0 AND at>=?1 GROUP BY session_key ORDER BY 5 DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map([&since], |row| {
+            Ok(SessionUsageRow {
+                session_key: row.get(0)?,
+                project_key: row.get(1)?,
+                provider: row.get(2)?,
+                calls: row.get::<_, i64>(3)?.max(0) as u64,
+                tokens: row.get::<_, i64>(4)?.max(0) as u64,
+                cost: row.get(5)?,
+                first_at: row.get(6)?,
+                last_at: row.get(7)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Serialize)]
+struct SessionEventRow {
+    id: String,
+    provider: String,
+    model: String,
+    at: String,
+    input: u64,
+    output: u64,
+    cached: u64,
+    cost: f64,
+    task: String,
+}
+
+/// 单个会话的事件明细（下钻用），只返回用量字段，不包含任何正文。
+#[tauri::command]
+fn session_usage_events(
+    session_key: String,
+    days: i64,
+    state: State<AppDb>,
+) -> Result<Vec<SessionEventRow>, String> {
+    if session_key.len() > 300 {
+        return Err("会话标识过长".into());
+    }
+    let since = (Utc::now() - chrono::Duration::days(days.clamp(1, 365))).to_rfc3339();
+    let db = state.0.lock().map_err(|_| "数据库锁定")?;
+    let mut statement = db
+        .prepare(
+            "SELECT id,provider,model,at,input_tokens,output_tokens,cached_tokens,cost,task FROM usage_events WHERE session_key=?1 AND is_shadowed=0 AND at>=?2 ORDER BY at DESC LIMIT 500",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map(params![session_key, since], |row| {
+            Ok(SessionEventRow {
+                id: row.get(0)?,
+                provider: row.get(1)?,
+                model: row.get(2)?,
+                at: row.get(3)?,
+                input: row.get::<_, i64>(4)?.max(0) as u64,
+                output: row.get::<_, i64>(5)?.max(0) as u64,
+                cached: row.get::<_, i64>(6)?.max(0) as u64,
+                cost: row.get(7)?,
+                task: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -3804,7 +5355,10 @@ fn opencode_model(value: &serde_json::Value) -> String {
     raw.rsplit('/').next().unwrap_or(raw).to_string()
 }
 
-fn opencode_event(value: &serde_json::Value, identity: &str) -> Option<UsageEvent> {
+fn opencode_event(
+    value: &serde_json::Value,
+    identity: &str,
+) -> Option<(UsageEvent, Option<String>)> {
     let role = value.get("role").and_then(|item| item.as_str());
     let has_usage = value.get("tokens").is_some() || value.get("usage").is_some();
     if !has_usage || matches!(role, Some(role) if role != "assistant") {
@@ -3858,28 +5412,40 @@ fn opencode_event(value: &serde_json::Value, identity: &str) -> Option<UsageEven
     } else {
         opencode_go_cost_usd(&model, input, output, cache_read) * 7.2
     };
-    Some(UsageEvent {
-        id: format!("opencode-json:{:x}", digest),
-        provider: "OpenCode Go".into(),
-        model,
-        at: opencode_time(value),
-        input,
-        output,
-        cached: cache_read,
-        cost,
-        task: "其他".into(),
-    })
+    let session = ["/sessionID", "/session_id", "/sessionId", "/session/id"]
+        .iter()
+        .find_map(|pointer| value.pointer(pointer).and_then(|item| item.as_str()))
+        .map(str::to_string)
+        .filter(|item| !item.trim().is_empty());
+    Some((
+        UsageEvent {
+            id: format!("opencode-json:{:x}", digest),
+            provider: "OpenCode Go".into(),
+            model,
+            at: opencode_time(value),
+            input,
+            output,
+            cached: cache_read,
+            cost,
+            task: "其他".into(),
+        },
+        session,
+    ))
 }
 
-fn collect_opencode_events(value: &serde_json::Value, identity: &str, rows: &mut Vec<UsageEvent>) {
+fn collect_opencode_events(
+    value: &serde_json::Value,
+    identity: &str,
+    rows: &mut Vec<(UsageEvent, Option<String>)>,
+) {
     if let Some(items) = value.as_array() {
         for (index, item) in items.iter().enumerate() {
             collect_opencode_events(item, &format!("{identity}:{index}"), rows);
         }
         return;
     }
-    if let Some(event) = opencode_event(value, identity) {
-        rows.push(event);
+    if let Some(pair) = opencode_event(value, identity) {
+        rows.push(pair);
         return;
     }
     for key in ["messages", "events", "items", "data"] {
@@ -3966,12 +5532,13 @@ pub(crate) fn sync_opencode_json_into(
         }
         next_cursor.insert(key, serde_json::Value::String(fingerprint));
     }
-    events.retain(|event| event.at.timestamp() >= since);
+    events.retain(|(event, _)| event.at.timestamp() >= since);
     let mut imported = 0usize;
-    for event in &events {
+    for (event, session) in &events {
         let mut provenance =
             reliability::UsageProvenance::observed(source_id, reliability::SourceKind::LocalJson);
         provenance.source_ref = Some(event.id.clone());
+        provenance.session_key = session.clone();
         if reliability::upsert_usage(target, event, &provenance)
             .map_err(|error| error.to_string())?
         {
@@ -4048,14 +5615,15 @@ fn sync_opencode_local_usage(
             }
         }
     }
-    events.retain(|event| event.at.timestamp() >= since);
+    events.retain(|(event, _)| event.at.timestamp() >= since);
     let db = state.0.lock().map_err(|_| "数据库锁定")?;
-    for event in &events {
+    for (event, session) in &events {
         let mut provenance = reliability::UsageProvenance::observed(
             "opencode-local",
             reliability::SourceKind::LocalJson,
         );
         provenance.source_ref = Some(event.id.clone());
+        provenance.session_key = session.clone();
         reliability::upsert_usage(&db, event, &provenance).map_err(|error| error.to_string())?;
     }
     Ok(OpenCodeLocalSyncResult {
@@ -4887,7 +6455,9 @@ mod tests {
     fn patches_only_deepseek_harness_base_url() {
         let source = "theme: light\nllm-deepseek:\n  maxTokens: 4096\nother:\n  enabled: true\n";
         let patched = patch_deepseek_harness_base_url(source, "http://127.0.0.1:18766/v1");
-        assert!(patched.contains("llm-deepseek:\n  baseURL: \"http://127.0.0.1:18766/v1\"\n  maxTokens: 4096"));
+        assert!(patched.contains(
+            "llm-deepseek:\n  baseURL: \"http://127.0.0.1:18766/v1\"\n  maxTokens: 4096"
+        ));
         assert!(patched.contains("other:\n  enabled: true"));
 
         let updated = patch_deepseek_harness_base_url(&patched, "http://127.0.0.1:18767/v1");
@@ -4897,7 +6467,8 @@ mod tests {
 
     #[test]
     fn appends_deepseek_harness_section_when_missing() {
-        let patched = patch_deepseek_harness_base_url("appearance: compact\n", "http://127.0.0.1:18766/v1");
+        let patched =
+            patch_deepseek_harness_base_url("appearance: compact\n", "http://127.0.0.1:18766/v1");
         assert!(patched.ends_with("llm-deepseek:\n  baseURL: \"http://127.0.0.1:18766/v1\"\n"));
     }
 
@@ -5004,6 +6575,51 @@ mod tests {
         assert_eq!(usage_counts(&values[0]), Some((1000, 200, 800)));
     }
     #[test]
+    fn accumulator_matches_full_parse_across_chunks() {
+        // 把 DeepSeek SSE 流按任意字节边界切分喂给增量解析器，
+        // 结果必须与全量 usage_values 解析一致（含跨 chunk 截断的 data 行）。
+        let body = b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":1000,\"completion_tokens\":200,\"prompt_cache_hit_tokens\":800}}\n\ndata: [DONE]\n";
+        let expected = parse_usage_counts(body);
+        let mut accumulator = UsageAccumulator::default();
+        for (index, _) in body.iter().enumerate() {
+            // 每个单字节作为独立 chunk，最苛刻的跨行截断场景。
+            accumulator.push(&body[index..=index]);
+        }
+        assert_eq!(accumulator.counts(), expected);
+    }
+    #[test]
+    fn accumulator_merges_anthropic_message_delta() {
+        // Anthropic SSE：message_start 给输入，message_delta 累加输出；增量解析取 max。
+        let mut accumulator = UsageAccumulator::default();
+        accumulator.push(
+            b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10240,\"cache_read_input_tokens\":8192}}}\n\n",
+        );
+        accumulator.push(
+            b"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":42}}\n\n",
+        );
+        accumulator.push(b"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n");
+        assert_eq!(accumulator.counts(), (10240, 42, 8192));
+    }
+    #[test]
+    fn accumulator_ignores_non_data_lines_and_done() {
+        let mut accumulator = UsageAccumulator::default();
+        accumulator.push(b"event: ping\ndata: [DONE]\nnot-json-line\n");
+        assert_eq!(accumulator.counts(), (0, 0, 0));
+    }
+    #[test]
+    fn deepseek_balance_sync_throttles_within_window() {
+        // 首次调用应放行；30 秒窗口内的再次调用必须被拒绝。
+        LAST_DEEPSEEK_BALANCE_SYNC_AT.store(0, Ordering::Relaxed);
+        assert!(try_claim_deepseek_balance_sync());
+        assert!(!try_claim_deepseek_balance_sync());
+    }
+    #[test]
+    fn trim_ascii_whitespace_handles_crlf() {
+        assert_eq!(trim_ascii_whitespace(b"  data: x\r\n"), b"data: x");
+        assert_eq!(trim_ascii_whitespace(b""), b"");
+        assert_eq!(trim_ascii_whitespace(b"  \t "), b"");
+    }
+    #[test]
     fn parses_anthropic_and_gemini_usage() {
         let anthropic = serde_json::json!({"usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":80}});
         assert_eq!(usage_counts(&anthropic), Some((120, 30, 80)));
@@ -5066,7 +6682,9 @@ mod tests {
             "tokens":{"input":1200,"output":340,"reasoning":60,"cache":{"read":800,"write":100}},
             "parts":[{"type":"text","text":"这段正文不能进入 Token Manager 数据库"}]
         });
-        let event = opencode_event(&value, "fixture").expect("应解析 OpenCode usage");
+        let event = opencode_event(&value, "fixture")
+            .expect("应解析 OpenCode usage")
+            .0;
         assert_eq!(event.provider, "OpenCode Go");
         assert_eq!(event.model, "deepseek-v4-pro");
         assert_eq!(event.input, 2100);
@@ -5102,6 +6720,65 @@ mod tests {
         let error = unprotect_secret(&[0x54, 0x4d, 0x01]).expect_err("损坏密文必须被拒绝");
         assert!(error.contains("DPAPI"));
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_backup_dpapi_roundtrip() {
+        let plaintext = "本机备份往返测试".as_bytes();
+        let protected = dpapi_protect(plaintext).expect("DPAPI 保护必须成功");
+        assert_ne!(&protected, plaintext);
+        let restored = dpapi_unprotect(&protected).expect("DPAPI 解保护必须成功");
+        assert_eq!(&restored, plaintext);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_backup_dpapi_rejects_tampered_blob() {
+        let mut protected = dpapi_protect("tamper-me".as_bytes()).expect("DPAPI 保护必须成功");
+        let last = protected.len() - 1;
+        protected[last] ^= 0xFF;
+        let error = dpapi_unprotect(&protected).expect_err("被篡改的备份必须被拒绝");
+        assert!(error.contains("DPAPI"));
+    }
+
+    #[test]
+    fn prompt_hash_is_deterministic_and_content_only() {
+        let payload = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                { "role": "system", "content": "你是助手" },
+                { "role": "user", "content": "解释量子纠缠" }
+            ]
+        });
+        let first = first_user_message_hash(&payload).expect("应提取首条用户消息指纹");
+        assert_eq!(first.len(), 64);
+        let again = first_user_message_hash(&payload).expect("再次计算应成功");
+        assert_eq!(first, again, "同一正文指纹必须稳定");
+        let changed = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [
+                { "role": "system", "content": "你是助手" },
+                { "role": "user", "content": "解释量子纠缠。" }
+            ]
+        });
+        let changed_hash = first_user_message_hash(&changed).expect("应提取指纹");
+        assert_ne!(first, changed_hash, "正文变化指纹必须变化");
+    }
+
+    #[test]
+    fn prompt_hash_handles_anthropic_parts_and_missing_user() {
+        let parts = serde_json::json!({
+            "messages": [
+                { "role": "user", "content": [ { "type": "text", "text": "你好，" }, { "type": "text", "text": "世界" } ] }
+            ]
+        });
+        let hash = first_user_message_hash(&parts).expect("数组正文应拼接后取指纹");
+        assert_eq!(hash.len(), 64);
+        let no_user = serde_json::json!({ "messages": [{ "role": "assistant", "content": "x" }] });
+        assert!(first_user_message_hash(&no_user).is_none());
+        let empty_text = serde_json::json!({ "messages": [{ "role": "user", "content": "   " }] });
+        assert!(first_user_message_hash(&empty_text).is_none());
+    }
 }
 pub fn run() {
     tauri::Builder::default()
@@ -5119,6 +6796,16 @@ pub fn run() {
         .manage(ProxyJobCoordinator::default())
         .manage(FloatingWindowRuntime::default())
         .setup(|app| {
+            // Token Manager 是托盘常驻监控工具：首次运行和每次升级后都自检当前
+            // Windows 用户的登录启动项。失败只记录诊断，不阻塞主窗口启动。
+            if let Err(error) = app.autolaunch().enable() {
+                eprintln!("Token Manager 开机自启启用失败: {error}");
+            }
+            // autostart 插件在部分 Windows 环境会把带空格的路径写成未加引号的
+            // 命令；紧接着使用原生注册表写入修正，确保下次登录确实能够启动。
+            if let Err(error) = ensure_windows_autostart_entry() {
+                eprintln!("Token Manager 开机启动项校正失败: {error}");
+            }
             // 大型 Agent 会话目录可能包含数千个子目录。监听恢复必须离开 Windows UI
             // 消息线程，否则首次启动期间 DWM 会把窗口判断为“未响应”。
             let watcher_app = app.handle().clone();
@@ -5262,6 +6949,8 @@ pub fn run() {
             restore_client_connection,
             export_encrypted_backup,
             import_encrypted_backup,
+            export_local_backup,
+            import_local_backup,
             cloud_session,
             cloud_request_code,
             cloud_password_login,
@@ -5277,8 +6966,23 @@ pub fn run() {
             update_floating_surfaces,
             set_floating_interaction_mode,
             set_floating_window_mode,
+            animate_floating_window_transition,
+            cancel_floating_window_transition,
+            collapse_floating_to_handle,
+            peek_floating_handle,
+            restore_floating_handle,
+            expand_floating_from_handle,
+            move_floating_handle,
+            get_floating_window_state,
             get_floating_render_status,
+            set_floating_hotkey,
             send_budget_alert,
+            monthly_usage_estimate,
+            set_prompt_usage_tracking,
+            prompt_usage_stats,
+            session_usage_summary,
+            session_usage_events,
+            balance_capabilities,
             start_proxy,
             start_all_proxies,
             start_proxy_group,
@@ -5286,7 +6990,8 @@ pub fn run() {
             fetch_arena_rankings,
             fetch_arena_model_profile,
             prepare_liquid_background_video,
-            verify_update_artifact
+            verify_update_artifact,
+            github_fallback_install
         ])
         .run(tauri::generate_context!())
         .expect("运行 Token Manager 失败");
