@@ -23,15 +23,15 @@ const fallbackSiteContent = {
   privacy_note: "本地解析 · 密钥加密 · 不上传代码与日志",
 };
 const fallbackRelease = {
-  version: "0.12.0",
-  title: "本地 Agent 一键接入与仪表盘体验升级",
-  download_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.12.0/Token.Manager_0.12.0_x64-setup.exe",
-  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.12.0/TokenManager_0.12.0_x64-portable.exe",
-  file_name: "Token.Manager_0.12.0_x64-setup.exe",
-  size_bytes: 11276719,
-  sha256: "328297FABF8C27FF56F108F2CA81FAA137470248EB487129906B519FA376DBEA",
-  published_at: "2026-08-15T10:44:00.000Z",
-  notes: "本地 Agent 一键接入（自动识别并配对账户端点）；DeepSeek Harness zstd 会话解析与余额刷新超时修复；仪表盘菜单栏按钮圆角按设计规范统一为 12px；仪表盘标题去重与说明显示方式链路修复。",
+  version: "0.14.2",
+  title: "悬浮窗切换动画闪烁修复",
+  download_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.14.2/Token.Manager_0.14.2_x64-setup.exe",
+  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.14.2/TokenManager_0.14.2_x64-portable.exe",
+  file_name: "Token.Manager_0.14.2_x64-setup.exe",
+  size_bytes: 19713683,
+  sha256: "FC0FDD0C88610A53D5A8D228919A419A233ACE07A401BDAA48E521881DEDC569",
+  published_at: "2026-08-21T05:00:21.000Z",
+  notes: "悬浮窗形态切换动画末期提前应用目标圆角，消除终点圆角跳变；过渡完成前窗口可见性兜底，防止动画后窗口隐藏；快速连点切换时过渡提交不再卡死。",
 };
 
 const versionNumber = (value) => String(value || "").split(".").reduce((total, part) => total * 1000 + (Number.parseInt(part, 10) || 0), 0);
@@ -68,7 +68,7 @@ export function App() {
   }, []);
   const releaseSize = release.size_bytes ? `${(release.size_bytes / 1048576).toFixed(2)} MB` : "Windows 10 / 11 64 位";
   const releaseDate = new Date(release.published_at).toLocaleDateString("zh-CN");
-  const trackedDownloadHref = "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.12.0/Token.Manager_0.12.0_x64-setup.exe";
+  const trackedDownloadHref = "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.14.2/Token.Manager_0.14.2_x64-setup.exe";
 
   return (
     <div className="site-shell">
