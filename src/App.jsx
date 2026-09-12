@@ -14,6 +14,9 @@ const facts = [
 
 const publicUrl = (path) => `${import.meta.env.BASE_URL}${path.replace(/^\//, "")}`;
 const cloudBaseUrl = "https://token-manager-cloud.netlify.app";
+// 下载统一走后台端点：后台按访客地理位置选择线路（大陆优先国内镜像），并匿名记录下载事件。
+// 官网不再把 GitHub 直链写死，否则国内访客点按钮必然超时。
+const trackedDownloadHref = `${cloudBaseUrl}/v1/download/latest?source=website`;
 const fallbackSiteContent = {
   hero_eyebrow: "WINDOWS 10 / 11 · X64",
   hero_lead: "看清每一次 AI 消耗",
@@ -25,13 +28,21 @@ const fallbackSiteContent = {
 const fallbackRelease = {
   version: "0.14.2",
   title: "悬浮窗切换动画闪烁修复",
-  download_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.14.2/Token.Manager_0.14.2_x64-setup.exe",
-  portable_href: "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.14.2/TokenManager_0.14.2_x64-portable.exe",
+  download_href: "https://github.com/fatimabentz691-max/token-manager/releases/download/v0.14.2/Token.Manager_0.14.2_x64-setup.exe",
+  portable_href: "https://github.com/fatimabentz691-max/token-manager/releases/download/v0.14.2/TokenManager_0.14.2_x64-portable.exe",
   file_name: "Token.Manager_0.14.2_x64-setup.exe",
   size_bytes: 19713683,
   sha256: "FC0FDD0C88610A53D5A8D228919A419A233ACE07A401BDAA48E521881DEDC569",
   published_at: "2026-08-21T05:00:21.000Z",
   notes: "悬浮窗形态切换动画末期提前应用目标圆角，消除终点圆角跳变；过渡完成前窗口可见性兜底，防止动画后窗口隐藏；快速连点切换时过渡提交不再卡死。",
+  // 后台取不到时的兜底线路：公共 GitHub 加速代理，均免备案、零成本、无需账号。
+  // 这些地址仅作应急，稳定性不由我们控制；正式线路由后台 mirrors 下发。
+  mirrors: [
+    "https://ghfast.top/https://github.com/fatimabentz691-max/token-manager/releases/download/v0.14.2/Token.Manager_0.14.2_x64-setup.exe",
+    "https://gh-proxy.com/https://github.com/fatimabentz691-max/token-manager/releases/download/v0.14.2/Token.Manager_0.14.2_x64-setup.exe",
+    "https://ghproxy.net/https://github.com/fatimabentz691-max/token-manager/releases/download/v0.14.2/Token.Manager_0.14.2_x64-setup.exe",
+    "https://gh.llkk.cc/https://github.com/fatimabentz691-max/token-manager/releases/download/v0.14.2/Token.Manager_0.14.2_x64-setup.exe",
+  ],
 };
 
 const versionNumber = (value) => String(value || "").split(".").reduce((total, part) => total * 1000 + (Number.parseInt(part, 10) || 0), 0);
@@ -43,6 +54,9 @@ function DownloadButton({ children, href, className = "" }) {
 export function App() {
   const [scrolled, setScrolled] = useState(false);
   const [release, setRelease] = useState(fallbackRelease);
+  // 后台清单是否已与页面版本对齐。后台记录落后时（例如仍停在 0.11.13），
+  // 主按钮不能走后端下载端点，否则会把国内用户导向旧版本安装包。
+  const [releaseFresh, setReleaseFresh] = useState(false);
   const [siteContent, setSiteContent] = useState(fallbackSiteContent);
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 18);
@@ -54,6 +68,7 @@ export function App() {
       .then(data => {
         if (versionNumber(data.version) >= versionNumber(fallbackRelease.version)) {
           setRelease({ ...fallbackRelease, ...data });
+          setReleaseFresh(true);
         }
       })
       .catch(() => {});
@@ -68,14 +83,40 @@ export function App() {
   }, []);
   const releaseSize = release.size_bytes ? `${(release.size_bytes / 1048576).toFixed(2)} MB` : "Windows 10 / 11 64 位";
   const releaseDate = new Date(release.published_at).toLocaleDateString("zh-CN");
-  const trackedDownloadHref = "https://github.com/fatimabentz691-max/HUSSEL/releases/download/v0.14.2/Token.Manager_0.14.2_x64-setup.exe";
+  // 下载线路：后台下发的 mirrors 是完整直链，直接给出即可绕过所有中转。
+  const mirrorHrefs = (Array.isArray(release.mirrors) ? release.mirrors : [])
+    .filter(item => typeof item === "string" && item.startsWith("https://"))
+    .map(item => item.trim());
+  const downloadLines = [
+    ...mirrorHrefs.map((href, index) => ({ href, label: `线路 ${index + 1}` })),
+    // 原始直链取后台清单的 download_url（后台已对齐时即当前版本），
+    // 只有后台清单不可用时才回落到内置的 fallbackRelease.download_href。
+    ...(release.download_url || release.download_href ? [{ href: release.download_url || release.download_href, label: "GitHub 原链" }] : []),
+  ].filter((item, index, all) => all.findIndex(other => other.href === item.href) === index);
+  // 主按钮：后台清单已对齐时走后台端点（按地理位置选路 + 匿名下载计数）；
+  // 后台记录落后时直接指向可用线路，保证按钮下到的就是页面显示的版本。
+  const primaryDownloadHref = releaseFresh
+    ? trackedDownloadHref
+    : (mirrorHrefs[0] || release.download_url || release.download_href || trackedDownloadHref);
+  // 便携版与安装版在同一个 Release 目录下，而公共加速代理是纯前缀式转发，
+  // 因此把镜像直链末尾的文件名换成便携版文件名，就能得到便携版的加速直链，
+  // 否则国内点“便携版”仍会走 github.com 原链而超时。
+  const setupName = release.file_name || "";
+  const portableName = setupName.replace("Token.Manager_", "TokenManager_").replace("-setup.exe", "-portable.exe");
+  const setupMirror = mirrorHrefs.find(href => setupName && href.endsWith(setupName));
+  const portableHref = (setupMirror && portableName !== setupName)
+    ? setupMirror.slice(0, -setupName.length) + portableName
+    : (release.portable_href || release.download_url || release.download_href || trackedDownloadHref);
+  const mirrorLines = downloadLines.length > 0 && (
+    <p className="mirror-lines"><span>下载慢或中断？可切换线路：</span>{downloadLines.map(item => <a key={item.href} className="text-link" href={item.href} rel="noopener noreferrer">{item.label}</a>)}</p>
+  );
 
   return (
     <div className="site-shell">
       <header className={`topbar ${scrolled ? "is-scrolled" : ""}`}>
         <a className="brand" href="#top" aria-label="Token Manager 首页"><img src={publicUrl("images/token-manager-icon.png")} alt="" /><span>Token Manager</span></a>
         <nav aria-label="主导航"><a href="#features">功能</a><a href="#providers">平台</a><a href="#privacy">隐私</a><a href="#faq">常见问题</a></nav>
-        <DownloadButton href={trackedDownloadHref} className="top-download">免费下载</DownloadButton>
+        <DownloadButton href={primaryDownloadHref} className="top-download">免费下载</DownloadButton>
       </header>
 
       <main id="top">
@@ -85,7 +126,8 @@ export function App() {
             <h1 id="hero-title"><span>Token</span><span>Manager</span></h1>
             <p className="hero-lead">{siteContent.hero_lead}</p>
             <p className="hero-description">{siteContent.hero_description}</p>
-            <div className="hero-actions"><DownloadButton href={trackedDownloadHref}>免费下载 v{release.version} · {release.title}</DownloadButton><a className="text-link" href={release.portable_href}>便携版</a><a className="text-link" href="#features">查看全部功能</a></div>
+            <div className="hero-actions"><DownloadButton href={primaryDownloadHref}>免费下载 v{release.version} · {release.title}</DownloadButton><a className="text-link" href={portableHref}>便携版</a><a className="text-link" href="#features">查看全部功能</a></div>
+            {mirrorLines}
             <p className="platform-note">{siteContent.privacy_note}</p>
           </div>
           <figure className="product-stage glass-panel">
@@ -121,8 +163,8 @@ export function App() {
         </section>
 
         <section id="download" className="download-section section-pad">
-          <div className="download-main"><img src={publicUrl("images/token-manager-icon.png")} alt="Token Manager 图标" /><p className="eyebrow">TOKEN MANAGER v{release.version} · WINDOWS</p><h2>{siteContent.download_title}</h2><p>{release.notes || siteContent.download_description}</p><div className="hero-actions"><DownloadButton href={trackedDownloadHref}>下载 {release.version} 安装版 · {releaseSize}</DownloadButton><a className="text-link" href={release.portable_href}>下载便携版</a></div></div>
-          <aside className="download-details glass-panel"><h3>后台实时发行</h3><a href={trackedDownloadHref}><span>Token Manager v{release.version} · {release.title}</span><small>推荐 · Windows 10 / 11 64 位 · 下载次数会匿名计入维护后台</small></a><div className="checksum"><span>安装包 SHA-256</span><code>{release.sha256 ? `${release.sha256.slice(0,8)}…${release.sha256.slice(-8)}` : "发布后由后台展示"}</code></div><div className="checksum"><span>发布时间</span><code>{releaseDate}</code></div></aside>
+          <div className="download-main"><img src={publicUrl("images/token-manager-icon.png")} alt="Token Manager 图标" /><p className="eyebrow">TOKEN MANAGER v{release.version} · WINDOWS</p><h2>{siteContent.download_title}</h2><p>{release.notes || siteContent.download_description}</p><div className="hero-actions"><DownloadButton href={primaryDownloadHref}>下载 {release.version} 安装版 · {releaseSize}</DownloadButton><a className="text-link" href={portableHref}>下载便携版</a></div></div>
+          <aside className="download-details glass-panel"><h3>后台实时发行</h3><a href={primaryDownloadHref}><span>Token Manager v{release.version} · {release.title}</span><small>{releaseFresh ? "推荐 · Windows 10 / 11 64 位 · 下载次数会匿名计入维护后台" : "推荐 · Windows 10 / 11 64 位 · 当前经加速线路分发"}</small></a><div className="checksum"><span>安装包 SHA-256</span><code>{release.sha256 ? `${release.sha256.slice(0,8)}…${release.sha256.slice(-8)}` : "发布后由后台展示"}</code></div><div className="checksum"><span>发布时间</span><code>{releaseDate}</code></div>{mirrorLines}</aside>
         </section>
 
         <section id="faq" className="faq section-pad"><header className="section-heading"><p className="eyebrow">FAQ</p><h2>下载之前，你可能想知道。</h2></header><div className="faq-list">
